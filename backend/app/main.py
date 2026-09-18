@@ -4,11 +4,13 @@ import secrets
 import socket
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -83,3 +85,10 @@ async def ping():
         raise HTTPException(status_code=502, detail=f"llm error: {e}") from e
     reply = (res.choices[0].message.content or "").strip()
     return {"ok": True, "reply": reply, "ms": int((time.monotonic() - started) * 1000)}
+
+
+# Single origin: serve the built frontend from the same port as the API, so the browser
+# talks to /api on its own origin and Funnel exposes one port. Built by deploy.sh.
+FRONTEND_DIST = Path(os.environ.get("FRONTEND_DIST", Path(__file__).resolve().parents[2] / "frontend" / "dist"))
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
