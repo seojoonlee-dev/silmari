@@ -34,6 +34,11 @@ do I need to do", and "what was that thing I was reading".
   debounce short flips, treat workspace as part of context, and key everything on the set of
   windows rather than on which one is in front.
 
+- **Environment profile (later).** The model should learn each device from its frames: the
+  OS and desktop, what the workspaces or virtual desktops look like and how to tell them
+  apart, where notifications pop up and what they look like, the usual apps. Stored per
+  device and fed back into every analysis prompt so identification gets better over time.
+
 ## Deployment
 
 Single origin on the home GPU machine. The FastAPI backend serves the built frontend as
