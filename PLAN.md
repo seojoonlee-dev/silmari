@@ -59,5 +59,7 @@ Password login returns a bearer token stored in the browser.
 - Done: backend with password auth and a Qwen round-trip; frontend UI with a sample day
   (tiled preview, playhead-driven panel, per-window timeline lanes, canned ask answers);
   single-origin deploy behind Funnel.
-- Not built: screen capture, frame upload, window tracking, notification tracking,
-  summaries, real `/api/ask`, "back to it" actions.
+- Not built: notification tracking beyond detection, content summaries on demand, real
+  `/api/ask`, "back to it" actions, the environment profile, and a first-login "how to use"
+  tutorial. The sample day in `frontend/src/data/sample.ts` is reserved for that tutorial;
+  fresh and reset devices now start from an empty screen.
