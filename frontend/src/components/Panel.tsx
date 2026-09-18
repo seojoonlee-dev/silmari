@@ -24,6 +24,18 @@ type Props = {
 export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, onGoToMin }: Props) {
   const NOW = day.now;
   const t = useT();
+  const [question, setQuestion] = useState("");
+  const [thread, setThread] = useState<Turn[]>([]);
+  // The conversation lives on the server, so a reload (or another browser on this device id) gets it back.
+  useEffect(() => {
+    let stop = false;
+    chatHistory(deviceId())
+      .then((r) => !stop && setThread(r.turns.map((t) => ({ q: t.q, a: t.a, cites: t.cites }))))
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, []);
   if (!stretch) {
     return (
       <aside className="panel">
@@ -38,18 +50,6 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
       </aside>
     );
   }
-  const [question, setQuestion] = useState("");
-  const [thread, setThread] = useState<Turn[]>([]);
-  // The conversation lives on the server, so a reload (or another browser on this device id) gets it back.
-  useEffect(() => {
-    let stop = false;
-    chatHistory(deviceId())
-      .then((r) => !stop && setThread(r.turns.map((t) => ({ q: t.q, a: t.a, cites: t.cites }))))
-      .catch(() => {});
-    return () => {
-      stop = true;
-    };
-  }, []);
   const tt = live ? NOW : time;
   const ago = Math.max(0, toMin(NOW) - toMin(tt));
 
