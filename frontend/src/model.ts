@@ -26,7 +26,12 @@ export type Box = { id: string; app: string; what: string; summary?: string; bbo
 export const WINDOW_PALETTE = ["#2F6F8F", "#C98A2B", "#7A5AB8", "#C4564E", "#2E8B6E", "#B5527F", "#5B6FD6", "#8A7A2E", "#3E8FA8", "#A0643C"];
 export const windowColor = (day: Day, id: string) => WINDOW_PALETTE[Math.max(0, day.laneIds.indexOf(id)) % WINDOW_PALETTE.length];
 export type OpenLoop = { text: string; meta: string; kind: "message" | "document" | "notification" };
-export type Stretch = { start: string; end: string; summary: string; narrative: string; then: string; leftHere: OpenLoop[]; windowIds: string[] };
+export type Stretch = {
+  start: string; end: string;
+  /** the same bounds in fractional minutes of the day, for placement at second resolution */
+  startMin: number; endMin: number;
+  summary: string; narrative: string; then: string; leftHere: OpenLoop[]; windowIds: string[]; questions?: string[];
+};
 export type Notification = { time: string; app: string; text: string; dismissed: boolean };
 
 export type Day = {

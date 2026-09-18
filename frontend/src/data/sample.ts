@@ -61,7 +61,7 @@ export const NOTIFICATIONS: Notification[] = [
 ];
 
 // A stretch is a period where the set of open windows did not change.
-type SampleStretch = Omit<Stretch, "windowIds">;
+type SampleStretch = Omit<Stretch, "windowIds" | "startMin" | "endMin">;
 
 export const STRETCHES: SampleStretch[] = [
   {
@@ -165,7 +165,7 @@ export function sampleDay(): Day {
     dayEnd: DAY_END,
     windows: WINDOWS.map((w) => ({ ...w, category: APP_CATEGORY[w.app] })),
     laneIds: LANE_IDS,
-    stretches: STRETCHES.map((s) => ({ ...s, windowIds: openDuring(s.start, s.end) })),
+    stretches: STRETCHES.map((s) => ({ ...s, startMin: toMin(s.start), endMin: toMin(s.end), windowIds: openDuring(s.start, s.end) })),
     notifications: NOTIFICATIONS,
     stats: STATS,
     liveBoxes: [],

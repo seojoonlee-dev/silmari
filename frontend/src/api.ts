@@ -55,5 +55,11 @@ export async function login(password: string): Promise<void> {
 
 export const me = () => api<Me>("/api/me");
 
+export type AskResult = { ok: true; id: number; answer: string; cites: { time: number; label: string }[] };
+export type ChatTurn = { id: number; ts: number; at: number | null; q: string; a: string; cites: { time: number; label: string }[] };
+export const chatHistory = (device: string) => api<{ ok: true; turns: ChatTurn[] }>(`/api/chat?device=${encodeURIComponent(device)}`);
+export const ask = (device: string, question: string, at: number | null, history: { q: string; a: string }[]) =>
+  api<AskResult>("/api/ask", { method: "POST", body: JSON.stringify({ device, question, at, history }) });
+
 export const resetDevice = (device: string) =>
   api<{ ok: true; deleted: Record<string, number> }>(`/api/device?device=${encodeURIComponent(device)}`, { method: "DELETE" });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Day } from "../model";
-import { fmtDuration, fromMin, laneLabel, midpoint, toMin, windowColor } from "../model";
+import { fmtDuration, fromMin, laneLabel, toMin, windowColor } from "../model";
 
 // Tick marks measured from the start of the range, at the coarsest step that gives about 6 to 8 labels.
 function ticksFor(start: string, end: string): string[] {
@@ -32,7 +32,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
   const span = Math.max(1, toMin(DAY_END) - toMin(DAY_START));
   const pct = (t: string) => ((toMin(t) - toMin(DAY_START)) / span) * 100;
   const pctMin = (m: number) => ((m - toMin(DAY_START)) / span) * 100;
-  const sel = Math.max(0, STRETCHES.findLastIndex((s) => toMin(s.start) <= playMin));
+  const sel = Math.max(0, STRETCHES.findLastIndex((s) => s.startMin <= playMin));
   const trackRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
   // keep the selected card in view as the playhead moves
@@ -63,14 +63,14 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
   const hoverCard = hovered && hover && (() => {
     const wins = hovered.windowIds.map((id) => WINDOWS.find((w) => w.id === id)).filter((w): w is NonNullable<typeof w> => !!w);
     const notes = day.notifications.filter((n) => toMin(n.time) >= toMin(hovered.start) && toMin(n.time) < toMin(hovered.end));
-    const img = day.imageAt ? day.imageAt(toMin(midpoint(hovered))) : null;
+    const img = day.imageAt ? day.imageAt((hovered.startMin + hovered.endMin) / 2) : null;
     const width = lanesRef.current?.clientWidth ?? 800;
     const left = Math.min(Math.max(hover.x, 170), width - 170);
     return (
       <div className="hovercard" style={{ left }} role="tooltip">
         <div className="row-between">
           <span className="mono small">{hovered.start}–{hovered.end}</span>
-          <span className="muted small">{fmtDuration(Math.max(1, toMin(hovered.end) - toMin(hovered.start)))} · {wins.length} window{wins.length === 1 ? "" : "s"}</span>
+          <span className="muted small">{fmtDuration(Math.max(1, Math.round(hovered.endMin - hovered.startMin)))} · {wins.length} window{wins.length === 1 ? "" : "s"}</span>
         </div>
         {img && <img className="hovercard-img" src={img} alt="" />}
         <div className="hovercard-text">{hovered.narrative || hovered.summary}</div>
@@ -142,7 +142,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
               <div
                 key={s.start}
                 className={"stretch" + (i === sel ? " selected" : "")}
-                style={{ left: `${pct(s.start)}%`, width: `${pct(s.end) - pct(s.start)}%` }}
+                style={{ left: `${pctMin(s.startMin)}%`, width: `${pctMin(s.endMin) - pctMin(s.startMin)}%` }}
                 onMouseEnter={(e) => onMove(i, e)}
                 onMouseMove={(e) => onMove(i, e)}
               />
@@ -189,7 +189,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
         {STRETCHES.map((s, i) => {
           const apps = s.windowIds;
           return (
-            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onPin((toMin(s.start) + toMin(s.end)) / 2)}>
+            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onPin((s.startMin + s.endMin) / 2)}>
               <div className="row-gap muted small"><span className="mono">{s.start}–{s.end}</span>· {apps.length} window{apps.length === 1 ? "" : "s"}</div>
               <div className="scard-summary">{s.summary}</div>
             </button>

@@ -8,9 +8,15 @@ import Timeline from "./components/Timeline";
 import Wordmark from "./components/Wordmark";
 import { emptyDay } from "./data/empty";
 import { useFrameAnalysis, useRecorder, useTimeline } from "./live";
-import { fromMin, toMin, windowColor, type Stretch } from "./model";
+import { fromMin, windowColor, type Stretch } from "./model";
 
 type Auth = { state: "checking" } | { state: "out" } | { state: "in"; me: Me };
+/** epoch seconds for a fractional minute of today */
+const epochOfMin = (m: number) => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() / 1000 + m * 60;
+};
 const CAPTURE_MS = 3000;
 const POLL_MS = 5000;
 const EMPTY = emptyDay();
@@ -49,7 +55,7 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const live = scrub === null || scrub >= nowMin;
   const tMin = live ? nowMin : scrub;
   const t = live ? day.now : fromMin(Math.floor(tMin));
-  const sel = Math.max(0, day.stretches.findLastIndex((s) => toMin(s.start) <= tMin));
+  const sel = Math.max(0, day.stretches.findLastIndex((s) => s.startMin <= tMin));
   const stretch: Stretch | undefined = day.stretches[sel];
   // Saved frames only when rewinding; while live the preview is the screen share itself
   // (or the last saved frame if not currently recording).
@@ -149,9 +155,10 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           day={day}
           stretch={stretch}
           time={t}
+          atEpoch={live ? null : epochOfMin(tMin)}
           live={live}
           onJumpNow={() => setPinned(null)}
-          onGoTo={(i) => { const s = day.stretches[i]; if (s) setPinned((toMin(s.start) + toMin(s.end)) / 2); }}
+          onGoToMin={(m) => setPinned(m)}
         />
       </div>
 

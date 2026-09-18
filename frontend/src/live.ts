@@ -16,7 +16,7 @@ export const boxesOf = (a: Analysis | null | undefined): Box[] =>
 type ApiTimeline = {
   now: number;
   windows: { id: string; app: string; what: string; category: Category; start: number; end: number | null; lastSeen: number; summary: string | null; visible?: [number, number][] }[];
-  stretches: { id: number; start: number; end: number | null; windowIds: string[]; summary: string; narrative?: string; leftHere?: { text: string; where: string }[] }[];
+  stretches: { id: number; start: number; end: number | null; windowIds: string[]; summary: string; narrative?: string; leftHere?: { text: string; where: string }[]; questions?: string[] }[];
   notifications: { id: number; app: string; text: string; time: number; dismissed: boolean }[];
   latest: { id: number; ts: number; analysis: Analysis } | null;
   latestImage: { id: number; ts: number } | null;
@@ -59,15 +59,18 @@ export function fromApi(t: ApiTimeline): Day | null {
     return {
       start: hhmm(s.start),
       end: s.end ? hhmm(s.end) : now,
+      startMin: minuteOf(s.start),
+      endMin: s.end ? minuteOf(s.end) : minuteOf(nowTs),
       summary: s.summary || "Working",
       narrative: s.narrative || s.summary || "Nothing analyzed yet for this stretch.",
       then: next ? `At ${hhmm(next.start)} the set of windows changed.` : "",
       leftHere,
       windowIds: s.windowIds,
+      questions: s.questions ?? [],
     };
   });
   if (stretches.length === 0) {
-    stretches.push({ start: dayStart, end: now, summary: "Recording started", narrative: "Frames are being analyzed. The first stretch appears within a few seconds.", then: "", leftHere: [], windowIds: [] });
+    stretches.push({ start: dayStart, end: now, startMin: toMin(dayStart), endMin: minuteOf(nowTs), summary: "Recording started", narrative: "Frames are being analyzed. The first stretch appears within a few seconds.", then: "", leftHere: [], windowIds: [] });
   }
 
   const notifications: Notification[] = t.notifications.map((n) => ({ time: hhmm(n.time), app: n.app, text: n.text, dismissed: n.dismissed }));

@@ -38,7 +38,8 @@ b { font-weight: 700; }
 .left { width: calc(var(--preview-h) * 1.6); flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 /* The window list takes exactly the space left under the preview, whatever it contains. */
 .left > .card { flex: 1 1 0; min-height: 0; overflow: auto; }
-.panel { flex-grow: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.panel { flex-grow: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; scrollbar-width: thin; }
+.panel > * { flex-shrink: 0; }
 
 .label { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .muted { color: var(--muted); }
@@ -89,13 +90,26 @@ b { font-weight: 700; }
 .panel-head-row { min-height: 36px; flex-shrink: 0; }
 .time-big { font-size: 22px; font-weight: 500; }
 .now-tag { font-weight: 700; color: var(--accent); }
-.narrative { margin: 0; font-family: var(--serif); font-size: 21px; line-height: 1.3; }
-/* Fixed height so a longer or shorter sentence never moves what sits below it. */
-.narrative-card { height: 132px; flex-shrink: 0; overflow: auto; }
+.narrative { font-family: var(--serif); font-size: 16px; line-height: 1.45; }
+/* Grows with its content; the whole panel scrolls. */
+.narrative-card { flex-shrink: 0; }
+/* Rendered Markdown inside cards: tight spacing, no runaway margins. */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 0.6em; }
+.md ul, .md ol { margin: 0 0 0.6em; padding-left: 1.3em; }
+.md li { margin: 0.15em 0; }
+.md code { font-family: var(--mono); font-size: 0.9em; padding: 0 0.3em; border-radius: 4px; background: var(--ground); }
+.md strong { font-weight: 600; }
+.md h1, .md h2, .md h3 { font-size: 1em; font-weight: 700; margin: 0.6em 0 0.3em; }
+.loop .md { font-size: 13px; line-height: 1.4; }
+.bubble-me.md code { background: rgba(255, 255, 255, 0.18); color: #fff; }
+.bubble-me.md a { color: #fff; }
 .loops { display: flex; flex-direction: column; gap: 9px; }
 .loop { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; }
 .ask { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
-.chat { display: flex; flex-direction: column; gap: 8px; }
+.chat { display: flex; flex-direction: column; gap: 10px; }
+.chat-turn { display: flex; flex-direction: column; gap: 6px; }
 .bubble-me { align-self: flex-end; max-width: 85%; padding: 8px 12px; border-radius: 12px 12px 2px 12px; background: var(--accent); color: #fff; line-height: 1.4; }
 .bubble-ai { align-self: flex-start; max-width: 92%; padding: 10px 13px; border-radius: 12px 12px 12px 2px; background: var(--surface); border: 1px solid var(--line); line-height: 1.5; }
 .ask-bar { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 6px 0 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
