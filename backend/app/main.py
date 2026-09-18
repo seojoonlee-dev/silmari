@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 import json
+import shutil
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,11 +38,14 @@ SESSION_TOKEN = hmac.new(SECRET.encode(), PASSWORD.encode(), "sha256").hexdigest
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
 CLOSE_AFTER_S = float(os.environ.get("CLOSE_AFTER_S", "600"))
 ANALYZE_EVERY = int(os.environ.get("ANALYZE_EVERY", "5"))  # run the model on every Nth image frame
+BIG_CHANGE = float(os.environ.get("BIG_CHANGE", "20"))  # mean pixel diff (0-255) that forces analysis, e.g. a workspace switch
+STRETCH_REFRESH_S = float(os.environ.get("STRETCH_REFRESH_S", "60"))  # how often the open stretch's narrative is rewritten
+SIGHTING_GAP_S = float(os.environ.get("SIGHTING_GAP_S", "15"))  # unseen longer than this breaks a lane's visible run
 
 llm = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="none")
 bearer = HTTPBearer(auto_error=False)
 store = Store(DATA_DIR / "silmari.db")
-tracker = Tracker(store, llm, LLM_MODEL, close_after_s=CLOSE_AFTER_S, analyze_every=ANALYZE_EVERY)
+tracker = Tracker(store, llm, LLM_MODEL, close_after_s=CLOSE_AFTER_S, analyze_every=ANALYZE_EVERY, big_change=BIG_CHANGE, stretch_refresh_s=STRETCH_REFRESH_S)
 
 app = FastAPI(title="silmari-backend")
 app.add_middleware(
@@ -118,6 +122,9 @@ async def post_frame(
     device: str = Form(pattern=DEVICE_RE),
     ts: float = Form(),
     unchanged: bool = Form(default=False),
+    width: int | None = Form(default=None),
+    height: int | None = Form(default=None),
+    diff: float | None = Form(default=None),
     image: UploadFile | None = File(default=None),
 ):
     """One captured frame. `ts` is epoch seconds from the client; `unchanged` means the screen
@@ -132,9 +139,19 @@ async def post_frame(
         p = d / f"{int(ts * 1000)}.jpg"
         p.write_bytes(await image.read())
         path = str(p)
-    frame_id = store.add_frame(device, ts, path, unchanged)
+    frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff)
     background.add_task(tracker.process, device, frame_id)
     return {"ok": True, "id": frame_id}
+
+
+@app.delete("/api/device", dependencies=[Depends(require_auth)])
+async def delete_device(device: str = Query(pattern=DEVICE_RE)):
+    """Erase everything the server holds for one device: screenshots on disk and every row."""
+    async with tracker.lock(device):
+        counts = store.delete_device(device)
+        tracker.forget(device)
+        shutil.rmtree(DATA_DIR / "frames" / device, ignore_errors=True)
+    return {"ok": True, "deleted": counts}
 
 
 @app.get("/api/frames/{frame_id}/image", dependencies=[Depends(require_auth_or_query)])
@@ -145,18 +162,61 @@ async def frame_image(frame_id: int):
     return FileResponse(row["path"], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
+@app.get("/api/frames/{frame_id}/analysis", dependencies=[Depends(require_auth)])
+async def frame_analysis(frame_id: int):
+    """What the model saw in this frame (or the analysis it inherited): windows with boxes."""
+    row = store.frame(frame_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no frame")
+    return {"ok": True, "id": frame_id, "ts": row["ts"], "analysis": json.loads(row["analysis"]) if row["analysis"] else None}
+
+
 @app.get("/api/timeline", dependencies=[Depends(require_auth)])
 async def timeline(device: str = Query(pattern=DEVICE_RE)):
     now = time.time()
+    # Lanes draw only when a window was actually on screen. A run extends through every frame whose
+    # analysis lists the window, inherited ones included (a frame inherits only when the scene did
+    # not change, so it is evidence the window was still there), and ends at a transition frame
+    # (workspace switch), at the first analysis that lacks the window, or after a long silence.
+    visible: dict[str, list[list[float]]] = {}
+    open_run: dict[str, list[float]] = {}
+    for fr in store.db.execute("SELECT ts, analysis FROM frames WHERE device=? AND analysis IS NOT NULL ORDER BY ts", (device,)).fetchall():
+        try:
+            a = json.loads(fr["analysis"])
+        except (ValueError, TypeError):
+            continue
+        ts = float(fr["ts"])
+        if a.get("transition"):
+            for run in open_run.values():
+                run[1] = max(run[1], ts)
+            open_run.clear()
+            continue
+        if a.get("error") and not a.get("windows"):
+            continue
+        ids = {w["id"] for w in a.get("windows", [])}
+        for wid, run in list(open_run.items()):
+            if wid not in ids or ts - run[1] > SIGHTING_GAP_S * 2:
+                del open_run[wid]
+        for wid in ids:
+            if wid in open_run:
+                open_run[wid][1] = ts
+            else:
+                run = [ts, ts]
+                visible.setdefault(wid, []).append(run)
+                open_run[wid] = run
     windows = [
         {
-            "id": r["id"], "app": r["app"], "what": r["what"], "category": r["category"],
+            "id": store.unkey(r["id"]), "app": r["app"], "what": r["what"], "title": r["title"], "category": r["category"],
             "start": r["first_seen"], "end": r["closed_at"], "lastSeen": r["last_seen"], "summary": r["summary"],
+            "visible": visible.get(store.unkey(r["id"]), []),
         }
         for r in store.all_windows(device)
     ]
     stretches = [
-        {"id": r["id"], "start": r["start"], "end": r["end"], "windowIds": json.loads(r["window_ids"]), "summary": r["summary"] or ""}
+        {
+            "id": r["id"], "start": r["start"], "end": r["end"], "windowIds": [store.unkey(i) for i in json.loads(r["window_ids"])],
+            "summary": r["summary"] or "", "narrative": r["narrative"] or "", "leftHere": json.loads(r["left_here"]) if r["left_here"] else [],
+        }
         for r in store.all_stretches(device)
     ]
     notifications = [

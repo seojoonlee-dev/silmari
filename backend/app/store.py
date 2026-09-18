@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS frames (
   ts REAL NOT NULL,
   path TEXT,
   unchanged INTEGER NOT NULL DEFAULT 0,
-  analysis TEXT
+  analysis TEXT,
+  width INTEGER,
+  height INTEGER,
+  diff REAL
 );
 CREATE INDEX IF NOT EXISTS frames_device_ts ON frames(device, ts);
 
@@ -24,7 +27,9 @@ CREATE TABLE IF NOT EXISTS windows (
   first_seen REAL NOT NULL,
   last_seen REAL NOT NULL,
   closed_at REAL,
-  summary TEXT
+  summary TEXT,
+  bbox TEXT,
+  title TEXT
 );
 CREATE INDEX IF NOT EXISTS windows_device ON windows(device);
 
@@ -34,7 +39,11 @@ CREATE TABLE IF NOT EXISTS stretches (
   start REAL NOT NULL,
   end REAL,
   window_ids TEXT NOT NULL,
-  summary TEXT
+  summary TEXT,
+  narrative TEXT,
+  left_here TEXT,
+  summarized_at REAL,
+  summarized_n INTEGER
 );
 CREATE INDEX IF NOT EXISTS stretches_device ON stretches(device);
 
@@ -58,12 +67,44 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.lock = threading.Lock()
+        # migrations for databases created before these columns existed
+        for table, col, typ in (
+            ("frames", "width", "INTEGER"), ("frames", "height", "INTEGER"), ("frames", "diff", "REAL"),
+            ("windows", "bbox", "TEXT"), ("windows", "title", "TEXT"),
+            ("stretches", "narrative", "TEXT"), ("stretches", "left_here", "TEXT"),
+            ("stretches", "summarized_at", "REAL"), ("stretches", "summarized_n", "INTEGER"),
+        ):
+            if col not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.db.commit()
+        # windows are keyed "<device>/<id>" so two devices can produce the same model id
+        rows = self.db.execute("SELECT id, device FROM windows WHERE id NOT LIKE '%/%'").fetchall()
+        for r in rows:
+            new = f"{r['device']}/{r['id']}"
+            self.db.execute("UPDATE windows SET id=? WHERE id=?", (new, r["id"]))
+        if rows:
+            for s in self.db.execute("SELECT id, device, window_ids FROM stretches").fetchall():
+                ids = [i if "/" in i else f"{s['device']}/{i}" for i in json.loads(s["window_ids"])]
+                self.db.execute("UPDATE stretches SET window_ids=? WHERE id=?", (json.dumps(ids), s["id"]))
+            self.db.commit()
+
+    @staticmethod
+    def key(device: str, wid: str) -> str:
+        return f"{device}/{wid}"
+
+    @staticmethod
+    def unkey(key: str) -> str:
+        return key.split("/", 1)[1] if "/" in key else key
 
     # -- frames --
-    def add_frame(self, device: str, ts: float, path: str | None, unchanged: bool) -> int:
+    def add_frame(
+        self, device: str, ts: float, path: str | None, unchanged: bool, size: tuple[int, int] | None = None, diff: float | None = None
+    ) -> int:
         with self.lock:
+            w, h = size if size else (None, None)
             cur = self.db.execute(
-                "INSERT INTO frames(device, ts, path, unchanged) VALUES (?,?,?,?)", (device, ts, path, int(unchanged))
+                "INSERT INTO frames(device, ts, path, unchanged, width, height, diff) VALUES (?,?,?,?,?,?,?)",
+                (device, ts, path, int(unchanged), w, h, diff),
             )
             self.db.commit()
             return int(cur.lastrowid)
@@ -75,6 +116,16 @@ class Store:
 
     def frame(self, frame_id: int) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM frames WHERE id=?", (frame_id,)).fetchone()
+
+    def latest_real_analysis(self, device: str) -> dict | None:
+        """Most recent analysis that is not a transition placeholder."""
+        for r in self.db.execute(
+            "SELECT analysis FROM frames WHERE device=? AND analysis IS NOT NULL ORDER BY ts DESC LIMIT 20", (device,)
+        ).fetchall():
+            a = json.loads(r["analysis"])
+            if not a.get("transition"):
+                return a
+        return None
 
     def latest_analyzed_frame(self, device: str) -> sqlite3.Row | None:
         return self.db.execute(
@@ -99,20 +150,28 @@ class Store:
     def all_windows(self, device: str) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM windows WHERE device=? ORDER BY first_seen", (device,)).fetchall()
 
-    def upsert_window(self, device: str, wid: str, app: str, what: str, category: str, ts: float, summary: str | None) -> None:
+    def upsert_window(
+        self, device: str, wid: str, app: str, what: str, category: str, ts: float, summary: str | None,
+        bbox: list[float] | None = None, title: str | None = None,
+    ) -> None:
+        bb = json.dumps(bbox) if bbox else None
+        wid = self.key(device, wid)
         with self.lock:
             row = self.db.execute("SELECT id FROM windows WHERE id=?", (wid,)).fetchone()
             if row:
                 self.db.execute(
-                    "UPDATE windows SET app=?, what=?, category=?, last_seen=?, closed_at=NULL, summary=COALESCE(?, summary) WHERE id=?",
-                    (app, what, category, ts, summary, wid),
+                    "UPDATE windows SET app=?, what=?, category=?, last_seen=?, closed_at=NULL, summary=COALESCE(?, summary), bbox=COALESCE(?, bbox), title=COALESCE(?, title) WHERE id=?",
+                    (app, what, category, ts, summary, bb, title, wid),
                 )
             else:
                 self.db.execute(
-                    "INSERT INTO windows(id, device, app, what, category, first_seen, last_seen, summary) VALUES (?,?,?,?,?,?,?,?)",
-                    (wid, device, app, what, category, ts, ts, summary),
+                    "INSERT INTO windows(id, device, app, what, category, first_seen, last_seen, summary, bbox, title) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (wid, device, app, what, category, ts, ts, summary, bb, title),
                 )
             self.db.commit()
+
+    def window(self, device: str, wid: str) -> sqlite3.Row | None:
+        return self.db.execute("SELECT * FROM windows WHERE id=?", (self.key(device, wid),)).fetchone()
 
     def touch_windows(self, ids: list[str], ts: float) -> None:
         if not ids:
@@ -160,6 +219,42 @@ class Store:
         with self.lock:
             self.db.execute("UPDATE stretches SET summary=? WHERE id=?", (summary, stretch_id))
             self.db.commit()
+
+    def set_stretch_narrative(self, stretch_id: int, narrative: str, left_here: list[dict], n: int, ts: float) -> None:
+        with self.lock:
+            self.db.execute(
+                "UPDATE stretches SET narrative=?, left_here=?, summarized_n=?, summarized_at=? WHERE id=?",
+                (narrative, json.dumps(left_here), n, ts, stretch_id),
+            )
+            self.db.commit()
+
+    def stretch(self, stretch_id: int) -> sqlite3.Row | None:
+        return self.db.execute("SELECT * FROM stretches WHERE id=?", (stretch_id,)).fetchone()
+
+    def analyses_between(self, device: str, start: float, end: float | None) -> list[sqlite3.Row]:
+        """Distinct analyses (in time order) for frames inside a stretch."""
+        q = "SELECT id, ts, analysis FROM frames WHERE device=? AND analysis IS NOT NULL AND ts>=?"
+        args: list = [device, start]
+        if end is not None:
+            q += " AND ts<?"
+            args.append(end)
+        rows = self.db.execute(q + " ORDER BY ts", args).fetchall()
+        out, prev = [], None
+        for r in rows:
+            if r["analysis"] != prev:
+                out.append(r)
+                prev = r["analysis"]
+        return out
+
+    def delete_device(self, device: str) -> dict:
+        """Remove every row for a device. Frame files are removed by the caller."""
+        with self.lock:
+            counts = {}
+            for table in ("frames", "windows", "stretches", "notifications"):
+                counts[table] = self.db.execute(f"SELECT COUNT(*) FROM {table} WHERE device=?", (device,)).fetchone()[0]
+                self.db.execute(f"DELETE FROM {table} WHERE device=?", (device,))
+            self.db.commit()
+            return counts
 
     # -- notifications --
     def notifications(self, device: str) -> list[sqlite3.Row]:
