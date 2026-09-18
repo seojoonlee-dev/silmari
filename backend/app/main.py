@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 import json
+import re
 import shutil
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -75,6 +76,13 @@ DEVICE_RE = r"^[A-Za-z0-9_-]{4,64}$"
 
 class LoginBody(BaseModel):
     password: str
+
+
+class AskBody(BaseModel):
+    device: str
+    question: str
+    at: float | None = None
+    history: list[dict] = []
 
 
 @app.get("/api/health")
@@ -162,6 +170,28 @@ async def frame_image(frame_id: int):
     return FileResponse(row["path"], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
+@app.post("/api/ask", dependencies=[Depends(require_auth)])
+async def ask(body: AskBody):
+    if not re.fullmatch(DEVICE_RE, body.device) or not body.question.strip():
+        raise HTTPException(status_code=400, detail="bad request")
+    try:
+        return {"ok": True, **(await tracker.ask(body.device, body.question, body.at, body.history))}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"model error: {e}") from e
+
+
+@app.get("/api/chat", dependencies=[Depends(require_auth)])
+async def chat_history(device: str = Query(pattern=DEVICE_RE)):
+    """The device's conversation so far, oldest first."""
+    return {
+        "ok": True,
+        "turns": [
+            {"id": r["id"], "ts": r["ts"], "at": r["at"], "q": r["question"], "a": r["answer"], "cites": json.loads(r["cites"])}
+            for r in store.chats(device)
+        ],
+    }
+
+
 @app.get("/api/frames/{frame_id}/analysis", dependencies=[Depends(require_auth)])
 async def frame_analysis(frame_id: int):
     """What the model saw in this frame (or the analysis it inherited): windows with boxes."""
@@ -216,6 +246,7 @@ async def timeline(device: str = Query(pattern=DEVICE_RE)):
         {
             "id": r["id"], "start": r["start"], "end": r["end"], "windowIds": [store.unkey(i) for i in json.loads(r["window_ids"])],
             "summary": r["summary"] or "", "narrative": r["narrative"] or "", "leftHere": json.loads(r["left_here"]) if r["left_here"] else [],
+            "questions": json.loads(r["questions"]) if r["questions"] else [],
         }
         for r in store.all_stretches(device)
     ]

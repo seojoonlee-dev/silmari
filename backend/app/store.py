@@ -43,9 +43,21 @@ CREATE TABLE IF NOT EXISTS stretches (
   narrative TEXT,
   left_here TEXT,
   summarized_at REAL,
-  summarized_n INTEGER
+  summarized_n INTEGER,
+  questions TEXT
 );
 CREATE INDEX IF NOT EXISTS stretches_device ON stretches(device);
+
+CREATE TABLE IF NOT EXISTS chats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device TEXT NOT NULL,
+  ts REAL NOT NULL,
+  at REAL,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  cites TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chats_device ON chats(device);
 
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +85,7 @@ class Store:
             ("windows", "bbox", "TEXT"), ("windows", "title", "TEXT"),
             ("stretches", "narrative", "TEXT"), ("stretches", "left_here", "TEXT"),
             ("stretches", "summarized_at", "REAL"), ("stretches", "summarized_n", "INTEGER"),
+            ("stretches", "questions", "TEXT"),
         ):
             if col not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -220,11 +233,13 @@ class Store:
             self.db.execute("UPDATE stretches SET summary=? WHERE id=?", (summary, stretch_id))
             self.db.commit()
 
-    def set_stretch_narrative(self, stretch_id: int, narrative: str, left_here: list[dict], n: int, ts: float) -> None:
+    def set_stretch_narrative(
+        self, stretch_id: int, narrative: str, left_here: list[dict], n: int, ts: float, questions: list[str] | None = None
+    ) -> None:
         with self.lock:
             self.db.execute(
-                "UPDATE stretches SET narrative=?, left_here=?, summarized_n=?, summarized_at=? WHERE id=?",
-                (narrative, json.dumps(left_here), n, ts, stretch_id),
+                "UPDATE stretches SET narrative=?, left_here=?, summarized_n=?, summarized_at=?, questions=? WHERE id=?",
+                (narrative, json.dumps(left_here), n, ts, json.dumps(questions or []), stretch_id),
             )
             self.db.commit()
 
@@ -250,11 +265,25 @@ class Store:
         """Remove every row for a device. Frame files are removed by the caller."""
         with self.lock:
             counts = {}
-            for table in ("frames", "windows", "stretches", "notifications"):
+            for table in ("frames", "windows", "stretches", "notifications", "chats"):
                 counts[table] = self.db.execute(f"SELECT COUNT(*) FROM {table} WHERE device=?", (device,)).fetchone()[0]
                 self.db.execute(f"DELETE FROM {table} WHERE device=?", (device,))
             self.db.commit()
             return counts
+
+    # -- chats --
+    def add_chat(self, device: str, ts: float, at: float | None, question: str, answer: str, cites: list[dict]) -> int:
+        with self.lock:
+            cur = self.db.execute(
+                "INSERT INTO chats(device, ts, at, question, answer, cites) VALUES (?,?,?,?,?,?)",
+                (device, ts, at, question, answer, json.dumps(cites)),
+            )
+            self.db.commit()
+            return int(cur.lastrowid)
+
+    def chats(self, device: str, limit: int = 200) -> list[sqlite3.Row]:
+        rows = self.db.execute("SELECT * FROM chats WHERE device=? ORDER BY ts DESC LIMIT ?", (device, limit)).fetchall()
+        return rows[::-1]
 
     # -- notifications --
     def notifications(self, device: str) -> list[sqlite3.Row]:

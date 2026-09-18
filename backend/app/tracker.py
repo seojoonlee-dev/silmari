@@ -78,12 +78,31 @@ Rules:
 
 STRETCH_SYSTEM = """You write the memory of one stretch of someone's screen time from a sequence of snapshots
 (each: time, the windows visible with what they showed, and a one-line activity).
-Write "narrative": 3 to 5 sentences, second person, past tense, in time order, naming the files,
+Write "narrative": 3 to 6 sentences, second person, past tense, in time order, naming the files,
 pages, notes, tracks, commands, people and topics that appear in the snapshots, and saying when you
-moved between windows. Concrete, no generalities.
+moved between windows. Concrete, no generalities. Light Markdown is welcome: **bold** for names of
+files, pages and people, `code` for commands and paths, and a short bullet list when several
+separate things happened.
 Write "left_here": up to 3 unfinished things that a snapshot shows DIRECT evidence of (text typed but
 not sent, an unsaved-changes marker, a page read halfway, a command still running). Usually empty.
+Write "questions": exactly 3 short questions this person might later ask about this stretch, in
+first person as they would type them ("What did the ping error say?", "Which track was playing?",
+"What was the notes page about?", "Which repo was I looking at?"). Each must be answerable from the
+snapshots, but keep them at the level of what a person forgets: an error message, a page, a file, a
+track, a person, a command, a topic. NO clock times or seconds in questions, no line numbers, no
+claims about actions the snapshots do not show (a file being open is not a file being edited or
+added). Nothing generic either ("What was I doing?").
 Never invent anything that is not in the snapshots."""
+
+ASK_SYSTEM = """You are the memory of one person's screen time today. You get their day as stretches (time
+span, windows on screen, a narrative of what they did, unfinished things), detailed snapshots around
+the moment they are looking at, the actual SCREENSHOTS of the most relevant moments (each labelled
+with its time), and their question. Answer in second person, briefly and concretely, in light
+Markdown. When the question is about what something said, showed, printed or contained, READ the
+screenshots and quote the exact text you see there; the written summaries are only hints. Name the
+actual names, paths, errors, tracks and commands. Every answer includes at least one time, written exactly as [[HH:MM:SS]] (taken from the
+material's "time", "from" or "to" fields), for the moment it talks about, so it becomes a link.
+If the material does not contain the answer, say so plainly instead of guessing."""
 
 STRETCH_SCHEMA = {
     "type": "object",
@@ -93,8 +112,9 @@ STRETCH_SCHEMA = {
             "type": "array", "maxItems": 3,
             "items": {"type": "object", "properties": {"text": {"type": "string"}, "where": {"type": "string"}}, "required": ["text", "where"]},
         },
+        "questions": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["narrative", "left_here"],
+    "required": ["narrative", "left_here", "questions"],
 }
 
 
@@ -193,7 +213,8 @@ class Tracker:
         self._summarizing: set[int] = set()
         self._pending_set: dict[str, tuple[list[str], float]] = {}
         self._settling: dict[str, int] = {}  # frames skipped since a big change, per device
-        self._transition_at: dict[str, float] = {}  # time of the last workspace switch, per device
+        self._transition_at: dict[str, float] = {}  # last frame of the old scene before a switch, per device
+        self._last_stable_ts: dict[str, float] = {}  # most recent non-transition frame, per device
 
     def lock(self, device: str) -> asyncio.Lock:
         return self._locks.setdefault(device, asyncio.Lock())
@@ -282,12 +303,14 @@ class Tracker:
                 self._settling[device] = self._settling.get(device, 0) + 1
                 if self._settling[device] <= 3:
                     if self._settling[device] == 1:
-                        self._transition_at[device] = ts  # where the old scene ended
+                        # the old scene ends at this frame, which is also where its lanes end
+                        self._transition_at[device] = ts
                     self.store.set_analysis(frame_id, {"windows": [], "notifications": [], "activity": "", "transition": True})
                     return
             waiting = self._settling.get(device, 0) > 0
             if not big:
                 self._settling[device] = 0
+            self._last_stable_ts[device] = ts
             due = has_image and (self._since.get(device, 0) % self.analyze_every == 0 or stale or waiting or big)
             if has_image:
                 self._since[device] = 1 if due else self._since.get(device, 0) + 1
@@ -486,12 +509,13 @@ class Tracker:
         pending = self._pending_set.get(device)
         if cur is None or json.loads(cur["window_ids"]) != vis_ids:
             if pending is not None and pending[0] == vis_ids:
-                # the boundary is the workspace switch itself when one happened in between
+                # The old stretch ends where its scene was last seen; the new one starts at the first
+                # clean analysis of the new scene. The transition frames in between stay a gap.
                 cut = self._transition_at.get(device)
-                boundary = cut if cut is not None and (cur is None or float(cur["start"]) < cut <= pending[1]) else pending[1]
+                end_old = cut if cut is not None and (cur is None or float(cur["start"]) < cut <= pending[1]) else pending[1]
                 if cur is not None:
-                    self.store.end_stretch(int(cur["id"]), boundary)
-                self.store.start_stretch(device, boundary, vis_ids, activity)
+                    self.store.end_stretch(int(cur["id"]), end_old)
+                self.store.start_stretch(device, pending[1], vis_ids, activity)
                 self._pending_set.pop(device, None)
             else:
                 self._pending_set[device] = (vis_ids, ts)
@@ -568,7 +592,119 @@ class Tracker:
             for x in (data.get("left_here") or [])
             if isinstance(x, dict) and x.get("text")
         ][:3]
-        self.store.set_stretch_narrative(stretch_id, narrative, left, len(rows), time.time())
+        questions = [str(q)[:160] for q in (data.get("questions") or []) if isinstance(q, str) and q.strip()][:3]
+        self.store.set_stretch_narrative(stretch_id, narrative, left, len(rows), time.time(), questions)
+
+
+    # ---------------- questions ----------------
+    async def ask(self, device: str, question: str, at: float | None, history: list[dict]) -> dict:
+        """Answer a question about the day from stretch narratives plus the snapshots around `at`."""
+        hhmmss = lambda t: time.strftime("%H:%M:%S", time.localtime(float(t)))  # noqa: E731
+        stretches = []
+        for r in self.store.all_stretches(device):
+            wins = []
+            for wid in json.loads(r["window_ids"]):
+                w = self.store.window(device, wid)
+                if w is not None:
+                    wins.append(f"{w['app']} · {w['what']}")
+            stretches.append(
+                {
+                    "from": hhmmss(r["start"]), "to": hhmmss(r["end"]) if r["end"] else "now",
+                    "windows": wins, "narrative": r["narrative"] or r["summary"] or "",
+                    "left_here": json.loads(r["left_here"]) if r["left_here"] else [],
+                }
+            )
+        if at is not None:
+            rows = self.store.db.execute(
+                "SELECT ts, analysis FROM frames WHERE device=? AND analysis IS NOT NULL AND ts BETWEEN ? AND ? ORDER BY ts",
+                (device, at - 240, at + 240),
+            ).fetchall()
+        else:
+            rows = self.store.db.execute(
+                "SELECT ts, analysis FROM frames WHERE device=? AND analysis IS NOT NULL ORDER BY ts DESC LIMIT 60", (device,)
+            ).fetchall()[::-1]
+        snaps, prev = [], None
+        for fr in rows:
+            a = json.loads(fr["analysis"])
+            if a.get("transition") or a.get("inherited") or fr["analysis"] == prev:
+                continue
+            prev = fr["analysis"]
+            snaps.append(
+                {
+                    "time": hhmmss(fr["ts"]), "activity": a.get("activity", ""),
+                    "windows": [{"type": w.get("type"), "what": w.get("what"), "summary": w.get("summary")} for w in a.get("windows", [])],
+                    "notifications": a.get("notifications", []),
+                }
+            )
+        notes = [
+            {"time": hhmmss(n["first_seen"]), "app": n["app"], "text": n["text"], "dismissed": bool(n["dismissed"])}
+            for n in self.store.notifications(device)
+        ]
+        material = {"stretches": stretches, "snapshots_near_the_moment": snaps[-24:], "notifications": notes}
+        messages = [{"role": "system", "content": ASK_SYSTEM}]
+        # Earlier turns of this device's conversation, kept server-side so they survive reloads.
+        turns = [{"q": r["question"], "a": r["answer"]} for r in self.store.chats(device, limit=8)] or history
+        for h in turns[-8:]:
+            if h.get("q"):
+                messages.append({"role": "user", "content": str(h["q"])[:1000]})
+            if h.get("a"):
+                messages.append({"role": "assistant", "content": str(h["a"])[:2000]})
+        looking = f"The person is looking at {hhmmss(at)}." if at is not None else "The person is looking at now."
+        # Screenshots to read: the moment being looked at, moments named in the question, and one
+        # from the middle of the stretch being looked at. At most three, nearest real frames.
+        wanted: list[float] = [at if at is not None else time.time()]
+        today = time.strftime("%Y-%m-%d")
+        for m in re.finditer(r"\b(\d{1,2}:\d{2}(?::\d{2})?)\b", question):
+            t = m.group(1)
+            try:
+                fmt = "%Y-%m-%d %H:%M:%S" if t.count(":") == 2 else "%Y-%m-%d %H:%M"
+                wanted.append(time.mktime(time.strptime(f"{today} {t}", fmt)))
+            except ValueError:
+                pass
+        for r in self.store.all_stretches(device):
+            end = float(r["end"]) if r["end"] else time.time()
+            if float(r["start"]) <= wanted[0] <= end:
+                wanted.append((float(r["start"]) + end) / 2)
+                break
+        shots: list[tuple[float, str]] = []
+        for w in wanted[:4]:
+            row = self.store.db.execute(
+                "SELECT id, ts, path FROM frames WHERE device=? AND path IS NOT NULL AND analysis IS NOT NULL "
+                "AND analysis NOT LIKE '%\"transition\": true%' ORDER BY ABS(ts-?) LIMIT 1",
+                (device, w),
+            ).fetchone()
+            if row and all(abs(row["ts"] - s[0]) > 2 for s in shots):
+                shots.append((float(row["ts"]), row["path"]))
+        shots = shots[:3]
+        content: list[dict] = [{"type": "text", "text": f"{looking}\n\nMATERIAL:\n{json.dumps(material, ensure_ascii=False)}"}]
+        for ts_, path in shots:
+            try:
+                content.append({"type": "text", "text": f"Screenshot at {hhmmss(ts_)}:"})
+                content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_b64(Path(path))}"}})
+            except OSError:
+                continue
+        content.append({"type": "text", "text": f"QUESTION: {question.strip()[:1000]}"})
+        messages.append({"role": "user", "content": content})
+        res = await self.llm.chat.completions.create(
+            model=self.model, max_tokens=900, temperature=0.2, messages=messages,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        answer = (res.choices[0].message.content or "").strip()
+        cites, seen = [], set()
+        for m in re.finditer(r"\[\[(\d{1,2}:\d{2}(?::\d{2})?)\]\]", answer):
+            t = m.group(1)
+            if t in seen:
+                continue
+            try:
+                fmt = "%Y-%m-%d %H:%M:%S" if t.count(":") == 2 else "%Y-%m-%d %H:%M"
+                cites.append({"time": time.mktime(time.strptime(f"{today} {t}", fmt)), "label": t})
+                seen.add(t)
+            except ValueError:
+                continue
+        # the model sometimes bolds the marker itself; avoid ****time****
+        answer = re.sub(r"\*{0,2}\[\[(\d{1,2}:\d{2}(?::\d{2})?)\]\]\*{0,2}", r"**\1**", answer)
+        cid = self.store.add_chat(device, time.time(), at, question.strip()[:1000], answer, cites[:6])
+        return {"id": cid, "answer": answer, "cites": cites[:6]}
 
 
 def now() -> float:
