@@ -26,7 +26,6 @@ export type Day = {
   stretches: Stretch[];
   notifications: Notification[];
   stats: { value: string; label: string }[];
-  intent: { text: string; timeOnIt: string };
   /** image for the frame at or before a time, if the day has real frames */
   imageAt?: (t: string) => string | null;
 };

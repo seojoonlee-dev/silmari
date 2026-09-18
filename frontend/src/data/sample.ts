@@ -132,8 +132,6 @@ export const STRETCHES: SampleStretch[] = [
   },
 ];
 
-export const INTENT = { text: "Finish the report intro before 15:00", setAt: "09:00", timeOnIt: "1 h 22 min today" };
-
 export const STATS = [
   { value: "2 h 44", label: "focused" },
   { value: "9", label: "window changes" },
@@ -167,7 +165,6 @@ export function sampleDay(): Day {
     stretches: STRETCHES.map((s) => ({ ...s, windowIds: openDuring(s.start, s.end) })),
     notifications: NOTIFICATIONS,
     stats: STATS,
-    intent: INTENT,
   };
 }
 

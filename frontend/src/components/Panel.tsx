@@ -2,13 +2,12 @@ import { useState } from "react";
 import { CANNED_ANSWER, SUGGESTIONS_NOW, SUGGESTIONS_PAST } from "../data/sample";
 import type { Day, Stretch } from "../model";
 import { midpoint, toMin } from "../model";
-import { IconBack, IconBell, IconClock, IconMail, IconNow, IconSend, IconTab, IconTarget } from "./icons";
+import { IconBack, IconBell, IconClock, IconMail, IconNow, IconSend, IconTab } from "./icons";
 
 type Props = { day: Day; stretch: Stretch; live: boolean; onJumpNow: () => void; onGoTo: (i: number) => void };
 
 export default function Panel({ day, stretch, live, onJumpNow, onGoTo }: Props) {
   const NOW = day.now;
-  const INTENT = day.intent;
   const [question, setQuestion] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
   const t = live ? NOW : midpoint(stretch);
@@ -65,12 +64,6 @@ export default function Panel({ day, stretch, live, onJumpNow, onGoTo }: Props) 
           )}
         </div>
       )}
-
-      <div className="intent">
-        <IconTarget size={16} color="#0F766E" />
-        <div><b>Intent</b> · {INTENT.text}</div>
-        <span className="mono muted small">{INTENT.timeOnIt}</span>
-      </div>
 
       <div className="ask">
         {asked && (

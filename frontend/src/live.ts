@@ -72,7 +72,7 @@ export function fromApi(t: ApiTimeline): Day | null {
     if (!best && time === now) best = t.latestImage;
     return best ? `/api/frames/${best.id}/image?token=${encodeURIComponent(token)}&v=${best.id}` : null;
   };
-  return { source: "live", now, dayStart, dayEnd, windows, laneIds, stretches, notifications, stats, intent: { text: "Set an intent for today", timeOnIt: "" }, imageAt };
+  return { source: "live", now, dayStart, dayEnd, windows, laneIds, stretches, notifications, stats, imageAt };
 }
 
 export function useTimeline(pollMs: number): { day: Day | null; error: string | null } {

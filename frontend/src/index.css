@@ -78,7 +78,6 @@ b { font-weight: 700; }
 .narrative { margin: 0; font-family: var(--serif); font-size: 21px; line-height: 1.3; }
 .loops { display: flex; flex-direction: column; gap: 9px; }
 .loop { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; }
-.intent { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
 .ask { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
 .chat { display: flex; flex-direction: column; gap: 8px; }
 .bubble-me { align-self: flex-end; max-width: 85%; padding: 8px 12px; border-radius: 12px 12px 2px 12px; background: var(--accent); color: #fff; line-height: 1.4; }
