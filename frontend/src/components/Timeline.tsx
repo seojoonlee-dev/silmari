@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import Markdown from "react-markdown";
 import type { Day } from "../model";
 import { fmtDuration, fromMin, laneLabel, toMin, windowColor } from "../model";
+import { useT } from "../i18n";
 
 // Tick marks measured from the start of the range, at the coarsest step that gives about 6 to 8 labels.
 function ticksFor(start: string, end: string): string[] {
@@ -52,6 +55,15 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
   const hours = ticksFor(DAY_START, DAY_END);
   const lanesRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number } | null>(null);
+  const [detail, setDetail] = useState<number | null>(null); // stretch card opened in a dialog
+  const t = useT();
+  const nWin = (n: number) => `${n} ${n === 1 ? t("window") : t("windows")}`;
+  useEffect(() => {
+    if (detail === null) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDetail(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detail]);
 
   function onMove(i: number, e: React.MouseEvent) {
     const box = lanesRef.current?.getBoundingClientRect();
@@ -70,7 +82,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
       <div className="hovercard" style={{ left }} role="tooltip">
         <div className="row-between">
           <span className="mono small">{hovered.start}–{hovered.end}</span>
-          <span className="muted small">{fmtDuration(Math.max(1, Math.round(hovered.endMin - hovered.startMin)))} · {wins.length} window{wins.length === 1 ? "" : "s"}</span>
+          <span className="muted small">{fmtDuration(Math.max(1, Math.round(hovered.endMin - hovered.startMin)))} · {nWin(wins.length)}</span>
         </div>
         {img && <img className="hovercard-img" src={img} alt="" />}
         <div className="hovercard-text">{hovered.narrative || hovered.summary}</div>
@@ -88,7 +100,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
         {notes.length > 0 && (
           <div className="hovercard-list">
             {notes.map((n, k) => (
-              <div key={k} className="small"><b>{n.app}</b> {n.time} · {n.text}{n.dismissed ? " (dismissed)" : ""}</div>
+              <div key={k} className="small"><b>{n.app}</b> {n.time} · {n.text}{n.dismissed ? ` (${t("dismissed")})` : ""}</div>
             ))}
           </div>
         )}
@@ -100,15 +112,15 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
     <section className="timeline">
       <div className="row-between">
         <div className="row-gap" style={{ gap: 18 }}>
-          <div className="label">Today</div>
+          <div className="label">{t("today")}</div>
           <div className="stats">
             {STATS.map((s) => <span key={s.label}><b className="mono">{s.value}</b> {s.label}</span>)}
           </div>
         </div>
-        <div className="legend"><span>One lane per window, drawn while it was on screen · hover to scrub, click to pin</span></div>
+        <div className="legend"><span>{t("laneHint")}</span></div>
       </div>
 
-      <div className="lanes" ref={lanesRef} onMouseLeave={() => setHover(null)}>
+      <div className="lanes" ref={lanesRef} onMouseLeave={() => setHover(null)} data-tour="timeline">
         {hoverCard}
         <div className="lanes-scroll">
         <div className="lanes-content">
@@ -119,7 +131,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
           </div>
         </div>
         {LANE_IDS.length === 0 && (
-          <div className="lane"><span /><div className="lane-track lane-empty">No windows yet. Start recording to fill the timeline.</div></div>
+          <div className="lane"><span /><div className="lane-track lane-empty">{t("noWindowsTimeline")}</div></div>
         )}
         {LANE_IDS.map((id) => (
           <div key={id} className="lane">
@@ -151,7 +163,7 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
               ref={trackRef}
               className="scrub-surface"
               role="slider"
-              aria-label="Scrub the day"
+              aria-label={t("scrub")}
               aria-valuemin={toMin(DAY_START)}
               aria-valuemax={Math.round(day.nowMin)}
               aria-valuenow={Math.round(playMin)}
@@ -185,17 +197,60 @@ export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onP
         </div>
       </div>
 
-      <div className="cards" ref={cardsRef}>
+      <div className="cards" ref={cardsRef} data-tour="cards">
         {STRETCHES.map((s, i) => {
           const apps = s.windowIds;
           return (
-            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onPin((s.startMin + s.endMin) / 2)}>
-              <div className="row-gap muted small"><span className="mono">{s.start}–{s.end}</span>· {apps.length} window{apps.length === 1 ? "" : "s"}</div>
+            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => setDetail(i)} title={t("open")}>
+              <div className="row-gap muted small"><span className="mono">{s.start}–{s.end}</span>· {nWin(apps.length)}</div>
               <div className="scard-summary">{s.summary}</div>
             </button>
           );
         })}
       </div>
+      {detail !== null && STRETCHES[detail] && createPortal(
+        (() => {
+          const st = STRETCHES[detail];
+          const wins = st.windowIds.map((id) => WINDOWS.find((w) => w.id === id)).filter((w): w is NonNullable<typeof w> => !!w);
+          return (
+            <div className="modal-backdrop" onClick={() => setDetail(null)}>
+              <div className="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="stretch-title" onClick={(e) => e.stopPropagation()}>
+                <div className="row-between">
+                  <div className="panel-head">
+                    <span id="stretch-title" className="mono time-big">{st.start}–{st.end}</span>
+                    <span className="muted small">{fmtDuration(Math.max(1, Math.round(st.endMin - st.startMin)))} · {nWin(wins.length)}</span>
+                  </div>
+                  <button className="btn btn-secondary" onClick={() => setDetail(null)} aria-label={t("close")}>✕</button>
+                </div>
+                <div className="narrative md"><Markdown>{st.narrative || st.summary}</Markdown></div>
+                {wins.length > 0 && (
+                  <div className="win-list">
+                    {wins.map((w) => (
+                      <div key={w.id} className="win-row hovercard-row">
+                        <span className="dot" style={{ background: windowColor(day, w.id) }} />
+                        <span className="win-app">{w.app}</span>
+                        <span className="muted ellipsis">{w.what}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {st.leftHere.length > 0 && (
+                  <div>
+                    <div className="label" style={{ marginBottom: 6 }}>{t("leftHere")}</div>
+                    {st.leftHere.map((l) => (
+                      <div key={l.text} className="small" style={{ marginBottom: 4 }}>{l.text} <span className="muted">· {l.meta}</span></div>
+                    ))}
+                  </div>
+                )}
+                <div className="row-gap" style={{ justifyContent: "flex-end" }}>
+                  <button className="btn btn-primary" onClick={() => { onPin((st.startMin + st.endMin) / 2); setDetail(null); }}>{t("goToMoment")}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
     </section>
   );
 }

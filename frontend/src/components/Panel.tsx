@@ -4,6 +4,7 @@ import { ask as askApi, chatHistory } from "../api";
 import { deviceId } from "../capture";
 import type { Day, Stretch } from "../model";
 import { minuteOf, toMin } from "../model";
+import { useT } from "../i18n";
 import { IconBell, IconClock, IconMail, IconNow, IconSend, IconTab } from "./icons";
 
 type Turn = { q: string; a: string; cites: { time: number; label: string }[]; pending?: boolean; error?: string };
@@ -22,16 +23,17 @@ type Props = {
 
 export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, onGoToMin }: Props) {
   const NOW = day.now;
+  const t = useT();
   if (!stretch) {
     return (
       <aside className="panel">
         <div className="panel-head">
           <span className="mono time-big">{NOW}</span>
-          <span className="now-tag">Now</span>
+          <span className="now-tag">{t("now")}</span>
         </div>
         <div className="card">
-          <p className="narrative">Nothing recorded yet.</p>
-          <div className="muted small">Press Start recording, pick a screen, and the first stretch appears within a few seconds. Everything stays on your own server.</div>
+          <p className="narrative">{t("nothingRecorded")}</p>
+          <div className="muted small">{t("nothingRecordedHint")}</div>
         </div>
       </aside>
     );
@@ -48,8 +50,8 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
       stop = true;
     };
   }, []);
-  const t = live ? NOW : time;
-  const ago = Math.max(0, toMin(NOW) - toMin(t));
+  const tt = live ? NOW : time;
+  const ago = Math.max(0, toMin(NOW) - toMin(tt));
 
   async function ask(q: string) {
     const text = q.trim();
@@ -71,29 +73,29 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
       {/* One fixed-height row in both states, so scrubbing never shifts the content below it. */}
       <div className="row-between panel-head-row">
         <div className="panel-head">
-          <span className="mono time-big">{t}</span>
+          <span className="mono time-big">{tt}</span>
           {live ? (
             <>
-              <span className="now-tag">Now</span>
-              <span className="muted small">on this for {Math.max(0, Math.round(day.nowMin - stretch.startMin))} min</span>
+              <span className="now-tag">{t("now")}</span>
+              <span className="muted small">{t("onThisFor")} {Math.max(0, Math.round(day.nowMin - stretch.startMin))} {t("min")}</span>
             </>
           ) : (
-            <span className="muted small">{Math.floor(ago / 60)} h {ago % 60} min ago</span>
+            <span className="muted small">{t("hoursMinAgo", { h: Math.floor(ago / 60), m: ago % 60 })}</span>
           )}
         </div>
         <button className="btn btn-secondary" onClick={onJumpNow} style={{ visibility: live ? "hidden" : "visible" }} aria-hidden={live} tabIndex={live ? -1 : 0}>
-          <IconNow size={14} />Jump to now
+          <IconNow size={14} />{t("jumpToNow")}
         </button>
       </div>
 
-      <div className="card narrative-card">
+      <div className="card narrative-card" data-tour="narrative">
         <div className="narrative md"><Markdown>{stretch.narrative}</Markdown></div>
         {stretch.then && <div className="muted small row-gap"><IconClock size={14} />{stretch.then}</div>}
       </div>
 
       {stretch.leftHere.length > 0 && (
         <div className="card">
-          <div className="label">Left here</div>
+          <div className="label">{t("leftHere")}</div>
           <div className="loops">
             {stretch.leftHere.map((l) => (
               <div key={l.text} className="loop">
@@ -108,7 +110,7 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
         </div>
       )}
 
-      <div className="ask">
+      <div className="ask" data-tour="ask">
         {thread.length > 0 && (
           <div className="chat">
             {thread.map((turn, k) => (
@@ -116,16 +118,16 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
                 <div className="bubble-me md"><Markdown>{turn.q}</Markdown></div>
                 <div className="bubble-ai">
                   {turn.pending ? (
-                    <span className="muted">Thinking…</span>
+                    <span className="muted">{t("thinking")}</span>
                   ) : turn.error ? (
-                    <span style={{ color: "#9a2e24" }}>Could not answer. {turn.error}</span>
+                    <span style={{ color: "#9a2e24" }}>{t("couldNotAnswer")} {turn.error}</span>
                   ) : (
                     <div className="md"><Markdown>{turn.a}</Markdown></div>
                   )}
                   {turn.cites.length > 0 && (
                     <div className="row-gap wrap" style={{ marginTop: 8 }}>
                       {turn.cites.map((c) => (
-                        <button key={c.label} className="chip chip-accent mono" onClick={() => onGoToMin(minuteOf(c.time))}>Go to {c.label}</button>
+                        <button key={c.label} className="chip chip-accent mono" onClick={() => onGoToMin(minuteOf(c.time))}>{t("goTo")} {c.label}</button>
                       ))}
                     </div>
                   )}
@@ -142,8 +144,8 @@ export default function Panel({ day, stretch, time, atEpoch, live, onJumpNow, on
           </div>
         )}
         <form className="ask-bar" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
-          <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={live ? "Ask about your day…" : `Ask about ${t}…`} aria-label="Ask about your day" />
-          <button type="submit" className="send" aria-label="Send"><IconSend size={16} color="#fff" /></button>
+          <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={live ? t("askDay") : t("askAbout", { t: tt })} aria-label={t("askDay")} />
+          <button type="submit" className="send" aria-label={t("send")}><IconSend size={16} color="#fff" /></button>
         </form>
       </div>
     </aside>

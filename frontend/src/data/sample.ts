@@ -155,7 +155,40 @@ export const CANNED_ANSWER = {
 const openDuring = (a: string, b: string) =>
   LANE_IDS.filter((id) => WINDOWS.some((w) => w.id === id && toMin(w.start) < toMin(b) && toMin(w.end) > toMin(a)));
 
-export function sampleDay(): Day {
+// Korean text for the same day; window names stay as they appear on screen.
+const KO: Record<string, string> = {
+  "Drafting the report intro": "보고서 서론 초안 작성",
+  "You were 14 minutes into drafting the report intro. One window, nothing else open; the cleanest stretch of the day.": "보고서 서론 초안을 쓴 지 14분째였습니다. 창 하나만 열려 있던, 하루 중 가장 집중된 구간이었습니다.",
+  "At 9:30 you opened Slack next to it.": "9:30에 옆에 Slack을 열었습니다.",
+  "Intro draft with Minji's thread beside it": "서론 초안과 민지의 스레드",
+  "The intro draft and Minji's Slack thread were side by side. The thread was about the deadline; the draft grew two paragraphs.": "서론 초안과 민지의 Slack 스레드가 나란히 있었습니다. 스레드는 마감에 관한 것이었고, 초안은 두 문단 늘었습니다.",
+  "At 9:52 YouTube joined them, probably from a link in the thread.": "9:52에 YouTube가 추가되었습니다. 스레드의 링크였을 가능성이 큽니다.",
+  "YouTube joined and the intro stopped moving": "YouTube가 열리고 서론이 멈춤",
+  "Word, Slack and YouTube were all open together. The intro did not change for 45 minutes; the YouTube sidebar did.": "Word, Slack, YouTube가 함께 열려 있었습니다. 서론은 45분 동안 바뀌지 않았고, YouTube 사이드바만 바뀌었습니다.",
+  "At 10:37 you closed YouTube and opened the Kim et al. paper in its place.": "10:37에 YouTube를 닫고 그 자리에 Kim et al. 논문을 열었습니다.",
+  "Adding citations from Kim et al. to the intro": "Kim et al. 인용을 서론에 추가",
+  "Word, Slack and the Kim et al. paper were open together. You were pulling citations from the paper into the intro.": "Word, Slack, Kim et al. 논문이 함께 열려 있었습니다. 논문의 인용을 서론으로 옮기고 있었습니다.",
+  "At 11:20 the team sync started and the intro was left mid-sentence.": "11:20에 팀 회의가 시작되어 서론이 문장 중간에서 멈췄습니다.",
+  "Report intro ends mid-sentence after the second citation": "보고서 서론이 두 번째 인용 뒤 문장 중간에서 끝남",
+  "Team sync, Slack alongside": "팀 회의, 옆에 Slack",
+  "Meet and Slack were open together for the team sync. Messages kept arriving in the thread during the call.": "팀 회의 동안 Meet와 Slack이 함께 열려 있었습니다. 통화 중에도 스레드에 메시지가 계속 왔습니다.",
+  "At 12:00 the call ended and you were away until 13:05.": "12:00에 통화가 끝났고 13:05까지 자리를 비웠습니다.",
+  "Reading Kim et al., results table": "Kim et al. 결과 표 읽기",
+  "One window: the Kim et al. paper, stopped at the results table. Your first stretch after the break.": "창 하나, Kim et al. 논문의 결과 표에서 멈춰 있었습니다. 휴식 후 첫 구간입니다.",
+  "At 13:33 you opened VS Code, Word and Slack around it.": "13:33에 그 주위로 VS Code, Word, Slack을 열었습니다.",
+  "Wiring the ping button, paper and thread beside it": "ping 버튼 연결, 옆에 논문과 스레드",
+  "Four windows: App.tsx in VS Code, the Kim et al. paper, the report draft and Minji's Slack thread. The edits are in App.tsx.": "창 네 개: VS Code의 App.tsx, Kim et al. 논문, 보고서 초안, 민지의 Slack 스레드. 편집은 App.tsx에서 이루어졌습니다.",
+  "Reply to Minji: the draft is typed but not sent": "민지에게 답장: 입력했지만 보내지 않음",
+  "Dentist at 16:00, you dismissed the reminder at 10:12": "16:00 치과 예약, 10:12에 알림을 닫음",
+  "Office hours moved to Friday, mail dismissed unread": "면담 시간이 금요일로 변경, 메일을 읽지 않고 닫음",
+  "Dentist, 16:00 today": "오늘 16:00 치과",
+  "Minji: did you send the intro draft yet?": "민지: 서론 초안 보냈어?",
+  "Prof. Han: office hours moved to Friday": "한 교수님: 면담 시간이 금요일로 변경",
+  focused: "집중", "window changes": "창 변경", "longest stretch": "가장 긴 구간", drift: "딴짓",
+};
+const ko = (s: string, lang: "en" | "ko") => (lang === "ko" ? KO[s] ?? s : s);
+
+export function sampleDay(lang: "en" | "ko" = "en"): Day {
   return {
     source: "sample",
     recording: true,
@@ -165,9 +198,14 @@ export function sampleDay(): Day {
     dayEnd: DAY_END,
     windows: WINDOWS.map((w) => ({ ...w, category: APP_CATEGORY[w.app] })),
     laneIds: LANE_IDS,
-    stretches: STRETCHES.map((s) => ({ ...s, startMin: toMin(s.start), endMin: toMin(s.end), windowIds: openDuring(s.start, s.end) })),
-    notifications: NOTIFICATIONS,
-    stats: STATS,
+    stretches: STRETCHES.map((s) => ({
+      ...s,
+      summary: ko(s.summary, lang), narrative: ko(s.narrative, lang), then: ko(s.then, lang),
+      leftHere: s.leftHere.map((l) => ({ ...l, text: ko(l.text, lang) })),
+      startMin: toMin(s.start), endMin: toMin(s.end), windowIds: openDuring(s.start, s.end),
+    })),
+    notifications: NOTIFICATIONS.map((n) => ({ ...n, text: ko(n.text, lang) })),
+    stats: STATS.map((x) => ({ ...x, label: ko(x.label, lang) })),
     liveBoxes: [],
     liveWindows: null,
   };

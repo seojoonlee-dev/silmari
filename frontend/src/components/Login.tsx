@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { ApiError, login } from "../api";
+import { useT } from "../i18n";
 import Wordmark from "./Wordmark";
 
 export default function Login({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const t = useT();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -16,7 +18,7 @@ export default function Login({ onDone }: { onDone: () => void }) {
       await login(password);
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? "That password is not right." : `Could not reach the server. ${String(err)}`);
+      setError(err instanceof ApiError && err.status === 401 ? t("wrongPassword") : `${t("unreachable")} ${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -26,14 +28,14 @@ export default function Login({ onDone }: { onDone: () => void }) {
     <main className="login">
       <form className="login-card" onSubmit={submit}>
         <Wordmark size={28} />
-        <h1 className="login-title">The loose end of your day, within reach.</h1>
-        <p className="muted">Enter the password once. This browser stays signed in.</p>
+        <h1 className="login-title">{t("tagline")}</h1>
+        <p className="muted">{t("loginHint")}</p>
         <label className="login-field">
-          Password
+          {t("password")}
           <input type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         {error && <div className="login-error" role="alert">{error}</div>}
-        <button type="submit" className="btn btn-primary" disabled={busy || !password}>{busy ? "Checking…" : "Continue"}</button>
+        <button type="submit" className="btn btn-primary" disabled={busy || !password}>{busy ? t("checking") : t("continue")}</button>
       </form>
     </main>
   );

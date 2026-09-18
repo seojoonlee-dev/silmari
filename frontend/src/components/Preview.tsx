@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { App } from "../data/sample";
 import type { Box, Win } from "../model";
+import { useT } from "../i18n";
 
 const KNOWN_APPS: App[] = ["Word", "Chrome", "VS Code", "Slack", "Meet", "YouTube"];
 const asApp = (a: string): App => (KNOWN_APPS.includes(a as App) ? (a as App) : "Chrome");
@@ -173,6 +174,7 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream, b
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [rect, setRect] = useState<Rect | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const t = useT();
   // The summary follows the cursor, drawn above every box; flipped near the right/bottom edges.
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const hoveredBox = hoverId ? boxes.find((b) => b.id === hoverId) : null;
@@ -186,17 +188,18 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream, b
   return (
     <section className="left">
       <div className="row-between">
-        <div className="label">Screen · this device</div>
+        <div className="label">{t("screenThisDevice")}</div>
         <span className="mono muted small">{caption}</span>
       </div>
       <div
         className="preview"
         ref={previewRef}
+        data-tour="preview"
         onMouseMove={(e) => setCursor({ x: e.clientX, y: e.clientY })}
         onMouseLeave={() => setCursor(null)}
       >
         {blank ? (
-          <div className="preview-blank">Not recording</div>
+          <div className="preview-blank">{t("notRecording")}</div>
         ) : showVideo ? (
           <LiveVideo stream={stream!} onRect={setRect} />
         ) : showImage ? (
@@ -226,7 +229,7 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream, b
             </div>
           );
         })}
-        {showVideo && <span className="chip chip-ink mono preview-tag">Live</span>}
+        {showVideo && <span className="chip chip-ink mono preview-tag">{t("live")}</span>}
         {hoveredBox && cursor && createPortal(
           // Fixed to the viewport and portaled to the body: above everything, never clipped by the
           // preview. Always to the right of the cursor; flips upward only near the bottom of the window.
@@ -243,15 +246,15 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream, b
           document.body,
         )}
       </div>
-      <div className="card">
+      <div className="card" data-tour="onscreen">
         <div className="row-between">
           <div className="label">
-            {rewound ? "On screen then" : "On screen"} · {windows.length} window{windows.length === 1 ? "" : "s"}
+            {rewound ? t("onScreenThen") : t("onScreen")} · {windows.length} {windows.length === 1 ? t("window") : t("windows")}
           </div>
-          <span className="muted small">click one for a summary</span>
+          <span className="muted small">{t("clickForSummary")}</span>
         </div>
         <div className="win-list">
-          {windows.length === 0 && <div className="muted small">{blank ? "Start recording to see what is on screen." : "No windows identified yet."}</div>}
+          {windows.length === 0 && <div className="muted small">{blank ? t("startToSee") : t("noWindowsYet")}</div>}
           {windows.map((w) => (
             <div key={w.id}>
               <button

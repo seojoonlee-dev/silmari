@@ -5,10 +5,14 @@ import Login from "./components/Login";
 import Panel from "./components/Panel";
 import Preview from "./components/Preview";
 import Timeline from "./components/Timeline";
+import Tour from "./components/Tour";
+import { sampleDay } from "./data/sample";
 import Wordmark from "./components/Wordmark";
 import { emptyDay } from "./data/empty";
 import { useFrameAnalysis, useRecorder, useTimeline } from "./live";
-import { fromMin, windowColor, type Stretch } from "./model";
+import { setLang, useLang, useT } from "./i18n";
+import { setSettings } from "./api";
+import { fromMin, openAt, toMin, windowColor, type Stretch } from "./model";
 
 type Auth = { state: "checking" } | { state: "out" } | { state: "in"; me: Me };
 /** epoch seconds for a fractional minute of today */
@@ -20,6 +24,8 @@ const epochOfMin = (m: number) => {
 const CAPTURE_MS = 3000;
 const POLL_MS = 5000;
 const EMPTY = emptyDay();
+const SAMPLES = { en: sampleDay("en"), ko: sampleDay("ko") };
+const TOUR_KEY = "silmari.tourDone";
 
 export default function App() {
   const [auth, setAuth] = useState<Auth>({ state: "checking" });
@@ -41,6 +47,28 @@ export default function App() {
 
 function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const [menu, setMenu] = useState(false);
+  const [tour, setTour] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(TOUR_KEY) !== "1";
+    } catch {
+      return true;
+    }
+  });
+  const onTutorial = () => setTour(true);
+  const endTour = () => {
+    try {
+      localStorage.setItem(TOUR_KEY, "1");
+    } catch {}
+    setTour(false);
+    setPinned(null);
+    setHover(null);
+  };
+  const t = useT();
+  const lang = useLang();
+  // tell the server the language once per session so model output matches the UI
+  useEffect(() => {
+    void setSettings(deviceId(), lang).catch(() => {});
+  }, [lang]);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState<string | null>(null);
   const [pinned, setPinned] = useState<number | null>(null); // fixed playhead, fractional minutes; null = live
@@ -49,12 +77,13 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const { day: liveDay, error, refresh } = useTimeline(POLL_MS);
   // Each upload refreshes the timeline immediately, so a new frame is scrubbable right away.
   const rec = useRecorder(CAPTURE_MS, refresh);
-  const day = liveDay ?? EMPTY;
+  // During the tour every element needs content, so the example day stands in.
+  const day = tour ? SAMPLES[lang] : (liveDay ?? EMPTY);
 
   const nowMin = day.nowMin;
   const live = scrub === null || scrub >= nowMin;
   const tMin = live ? nowMin : scrub;
-  const t = live ? day.now : fromMin(Math.floor(tMin));
+  const tt = live ? day.now : fromMin(Math.floor(tMin));
   const sel = Math.max(0, day.stretches.findLastIndex((s) => s.startMin <= tMin));
   const stretch: Stretch | undefined = day.stretches[sel];
   // Saved frames only when rewinding; while live the preview is the screen share itself
@@ -68,11 +97,11 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const boxes = blank ? [] : imageUrl ? saved.boxes : day.liveBoxes;
   // Only what the frame being shown actually contains. Nothing is listed for a frame without an analysis.
   const seen = imageUrl ? saved.windows : day.liveWindows;
-  const onScreen = blank ? [] : (seen ?? []);
-  const dateLabel = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+  const onScreen = blank ? [] : (seen ?? (day.source === "sample" ? openAt(day, tt) : []));
+  const dateLabel = new Date().toLocaleDateString(lang === "ko" ? "ko-KR" : undefined, { weekday: "long", day: "numeric", month: "short" });
 
   async function doReset() {
-    setResetting("Deleting…");
+    setResetting(t("deleting"));
     try {
       if (rec.status.state === "recording") rec.stop();
       const r = await resetDevice(deviceId());
@@ -84,21 +113,21 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       setResetting(null);
       console.info("reset", r.deleted);
     } catch (e) {
-      setResetting(`Could not reset: ${String(e)}`);
+      setResetting(`${t("couldNotReset")} ${String(e)}`);
     }
   }
 
   const st = rec.status;
   const chip =
     st.state === "recording" ? (
-      <button className="rec" onClick={rec.stop} title="Stop recording">
-        <span className="rec-dot" />Recording · {st.frames} frames{st.skipped ? ` · ${st.skipped} unchanged` : ""}
+      <button className="rec" onClick={rec.stop} title={t("stopRecording")}>
+        <span className="rec-dot" />{t("recording")} · {st.frames} {t("frames")}
       </button>
     ) : st.state === "starting" ? (
-      <button className="rec rec-off" disabled>Choose a screen…</button>
+      <button className="rec rec-off" disabled>{t("chooseScreen")}</button>
     ) : (
-      <button className="rec rec-off" onClick={rec.start} title="Share your screen to start">
-        <span className="rec-dot rec-dot-off" />Start recording
+      <button className="rec rec-off" onClick={rec.start} title={t("shareHint")} data-tour="record">
+        <span className="rec-dot rec-dot-off" />{t("startRecording")}
       </button>
     );
 
@@ -106,21 +135,29 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
     <div className="app">
       <header className="topbar">
         <div className="row-gap" style={{ gap: 14 }}>
-          <Wordmark />
+          <span data-tour="brand"><Wordmark /></span>
           <span className="muted small">{dateLabel}</span>
+          {day.source === "sample" && <span className="chip chip-plain">{t("sampleDay")}</span>}
 
         </div>
         <div className="row-gap" style={{ gap: 16, position: "relative" }}>
           {st.state === "error" && <span className="small" style={{ color: "#9a2e24" }}>{st.message}</span>}
           {error && <span className="small muted">timeline: {error}</span>}
           {chip}
-          <button className="mono muted menu-btn" onClick={() => setMenu((v) => !v)} aria-expanded={menu}>{day.now}</button>
+          <button className="mono muted menu-btn" onClick={() => setMenu((v) => !v)} aria-expanded={menu} data-tour="menu">{day.now}</button>
           {menu && (
             <div className="menu" role="menu">
-              <div className="small">Connected to <b className="mono">{me.host}</b></div>
-              <div className="small muted">Model {me.model}</div>
-              <button className="btn btn-secondary btn-danger" onClick={() => { setMenu(false); setConfirmReset(true); }}>Reset my data</button>
-              <button className="btn btn-secondary" onClick={onSignOut}>Sign out</button>
+              <div className="small">{t("connectedTo")} <b className="mono">{me.host}</b></div>
+              <div className="small muted">{t("model")} {me.model}</div>
+              <div className="row-between"><span className="small">{t("language")}</span>
+                <div className="seg" role="group" aria-label={t("language")}>
+                  <button className={"seg-btn" + (lang === "en" ? " on" : "")} onClick={() => setLang("en")}>EN</button>
+                  <button className={"seg-btn" + (lang === "ko" ? " on" : "")} onClick={() => setLang("ko")}>한국어</button>
+                </div>
+              </div>
+              <button className="btn btn-secondary" onClick={() => { setMenu(false); onTutorial(); }}>{t("showTutorial")}</button>
+              <button className="btn btn-secondary btn-danger" onClick={() => { setMenu(false); setConfirmReset(true); }}>{t("resetData")}</button>
+              <button className="btn btn-secondary" onClick={onSignOut}>{t("signOut")}</button>
             </div>
           )}
         </div>
@@ -129,12 +166,12 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       {confirmReset && (
         <div className="modal-backdrop" onClick={() => !resetting && setConfirmReset(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-title" onClick={(e) => e.stopPropagation()}>
-            <h2 id="reset-title" className="modal-title">Delete everything from this browser?</h2>
-            <p className="muted">Every screenshot and everything Silmari learned about this device is removed from the server. Other browsers are not affected. This cannot be undone.</p>
-            {resetting && <div className="small" style={{ color: resetting.startsWith("Could") ? "#9a2e24" : undefined }}>{resetting}</div>}
+            <h2 id="reset-title" className="modal-title">{t("resetTitle")}</h2>
+            <p className="muted">{t("resetBody")}</p>
+            {resetting && <div className="small" style={{ color: resetting !== t("deleting") ? "#9a2e24" : undefined }}>{resetting}</div>}
             <div className="row-gap" style={{ justifyContent: "flex-end" }}>
-              <button className="btn btn-secondary" onClick={() => setConfirmReset(false)} disabled={resetting === "Deleting…"}>Cancel</button>
-              <button className="btn btn-primary btn-danger-solid" onClick={doReset} disabled={resetting === "Deleting…"}>Delete everything</button>
+              <button className="btn btn-secondary" onClick={() => setConfirmReset(false)} disabled={resetting === t("deleting")}>{t("cancel")}</button>
+              <button className="btn btn-primary btn-danger-solid" onClick={doReset} disabled={resetting === t("deleting")}>{t("deleteEverything")}</button>
             </div>
           </div>
         </div>
@@ -143,7 +180,7 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <div className="main">
         <Preview
             windows={onScreen}
-            caption={!live ? `frame from ${t}` : rec.stream ? "live · every 3 s" : day.source === "live" ? `not recording · last frame ${day.now}` : "not recording"}
+            caption={!live ? `${t("frameFrom")} ${tt}` : rec.stream ? t("liveEvery") : day.source === "live" ? `${t("lastFrame")} ${day.now}` : day.source === "sample" ? t("sample") : t("notRecording")}
             rewound={!live}
             imageUrl={imageUrl}
             stream={rec.stream}
@@ -154,7 +191,7 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         <Panel
           day={day}
           stretch={stretch}
-          time={t}
+          time={tt}
           atEpoch={live ? null : epochOfMin(tMin)}
           live={live}
           onJumpNow={() => setPinned(null)}
@@ -163,6 +200,12 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       </div>
 
       <Timeline day={day} playMin={tMin} pinnedAt={pinned} hoverAt={hover} onHover={setHover} onPin={setPinned} />
+      {tour && (
+        <Tour
+          onDone={endTour}
+          demo={{ scrub: setHover, pin: setPinned, range: [toMin(day.dayStart) + 2, toMin(day.dayEnd) - 15] }}
+        />
+      )}
     </div>
   );
 }

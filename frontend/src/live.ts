@@ -3,6 +3,7 @@ import { api, getToken } from "./api";
 import { Recorder, deviceId, type CaptureStatus } from "./capture";
 import type { Box, Category, Day, Notification, OpenLoop, Stretch, Win } from "./model";
 import { fmtDuration, fromMin, hhmm, minuteOf, toMin } from "./model";
+import { t, useLang } from "./i18n";
 
 export type Analysis = { activity?: string; windows?: { id: string; app: string; what: string; category?: Category; summary?: string | null; bbox?: number[] | null }[] };
 /** What the model saw in one frame, as list rows. */
@@ -23,34 +24,34 @@ type ApiTimeline = {
   frames: { id: number; ts: number }[];
 };
 
-export function fromApi(t: ApiTimeline): Day | null {
-  if (t.frames.length === 0 && t.windows.length === 0) return null;
+export function fromApi(tl: ApiTimeline): Day | null {
+  if (tl.frames.length === 0 && tl.windows.length === 0) return null;
   // If no frame has arrived for a while, recording has stopped: freeze "now" at the last frame so
   // open windows and the current stretch stop growing.
-  const lastTs = Math.max(0, ...t.frames.map((f) => f.ts), t.latest?.ts ?? 0);
-  const recording = lastTs > 0 && t.now - lastTs < 15;
-  const nowTs = recording || lastTs === 0 ? t.now : lastTs;
+  const lastTs = Math.max(0, ...tl.frames.map((f) => f.ts), tl.latest?.ts ?? 0);
+  const recording = lastTs > 0 && tl.now - lastTs < 15;
+  const nowTs = recording || lastTs === 0 ? tl.now : lastTs;
   const now = hhmm(nowTs);
   // The timeline starts when recording started and runs to now, with a little room on the right.
-  const first = Math.min(nowTs, ...t.windows.map((w) => w.start), ...t.frames.map((f) => f.ts));
+  const first = Math.min(nowTs, ...tl.windows.map((w) => w.start), ...tl.frames.map((f) => f.ts));
   const dayStart = hhmm(first);
   const span = Math.max(1, toMin(now) - toMin(dayStart));
   const dayEnd = fromMin(Math.min(toMin(now) + Math.max(1, Math.round(span * 0.05)), 24 * 60 - 1));
 
-  const windows: Win[] = t.windows.map((w) => ({
+  const windows: Win[] = tl.windows.map((w) => ({
     id: w.id, app: w.app, what: w.what, category: w.category,
     start: hhmm(w.start), end: w.end ? hhmm(w.end) : now, summary: w.summary ?? undefined,
     visible: (w.visible ?? []).map(([a, b]) => [minuteOf(a), Math.max(minuteOf(b), minuteOf(a) + 0.05)] as [number, number]),
   }));
   const laneIds = [...new Set(windows.map((w) => w.id))];
 
-  const stretches: Stretch[] = t.stretches.map((s, i) => {
-    const next = t.stretches[i + 1];
+  const stretches: Stretch[] = tl.stretches.map((s, i) => {
+    const next = tl.stretches[i + 1];
     const leftHere: OpenLoop[] = (s.leftHere ?? []).map((l) => ({ text: l.text, meta: l.where, kind: "document" }));
     if (!s.end) {
-      for (const n of t.notifications) {
+      for (const n of tl.notifications) {
         leftHere.push({
-          text: n.dismissed ? `${n.text} (dismissed)` : n.text,
+          text: n.dismissed ? `${n.text} (${t("dismissed")})` : n.text,
           meta: `${n.app} · ${hhmm(n.time)}`,
           kind: "notification",
         });
@@ -61,50 +62,51 @@ export function fromApi(t: ApiTimeline): Day | null {
       end: s.end ? hhmm(s.end) : now,
       startMin: minuteOf(s.start),
       endMin: s.end ? minuteOf(s.end) : minuteOf(nowTs),
-      summary: s.summary || "Working",
-      narrative: s.narrative || s.summary || "Nothing analyzed yet for this stretch.",
-      then: next ? `At ${hhmm(next.start)} the set of windows changed.` : "",
+      summary: s.summary || t("working"),
+      narrative: s.narrative || s.summary || t("notAnalyzed"),
+      then: next ? t("setChanged", { t: hhmm(next.start) }) : "",
       leftHere,
       windowIds: s.windowIds,
       questions: s.questions ?? [],
     };
   });
   if (stretches.length === 0) {
-    stretches.push({ start: dayStart, end: now, startMin: toMin(dayStart), endMin: minuteOf(nowTs), summary: "Recording started", narrative: "Frames are being analyzed. The first stretch appears within a few seconds.", then: "", leftHere: [], windowIds: [] });
+    stretches.push({ start: dayStart, end: now, startMin: toMin(dayStart), endMin: minuteOf(nowTs), summary: t("recordingStarted"), narrative: t("framesAnalyzing"), then: "", leftHere: [], windowIds: [] });
   }
 
-  const notifications: Notification[] = t.notifications.map((n) => ({ time: hhmm(n.time), app: n.app, text: n.text, dismissed: n.dismissed }));
-  const recorded = t.frames.length ? Math.max(1, Math.round((nowTs - t.frames[0].ts) / 60)) : 0;
+  const notifications: Notification[] = tl.notifications.map((n) => ({ time: hhmm(n.time), app: n.app, text: n.text, dismissed: n.dismissed }));
+  const recorded = tl.frames.length ? Math.max(1, Math.round((nowTs - tl.frames[0].ts) / 60)) : 0;
   const longest = Math.max(0, ...stretches.map((s) => toMin(s.end) - toMin(s.start)));
   const stats = [
-    { value: fmtDuration(recorded), label: "recorded" },
-    { value: String(Math.max(0, t.stretches.length - 1)), label: "window changes" },
-    { value: fmtDuration(longest), label: "longest stretch" },
-    { value: String(t.notifications.length), label: "notifications" },
+    { value: fmtDuration(recorded), label: t("recorded") },
+    { value: String(Math.max(0, tl.stretches.length - 1)), label: t("windowChanges") },
+    { value: fmtDuration(longest), label: t("longestStretch") },
+    { value: String(tl.notifications.length), label: t("notifications") },
   ];
   const token = getToken() ?? "";
   // Closest saved frame to a moment, like scrubbing a video.
   const frameAt = (min: number) => {
     let best: { id: number; ts: number } | null = null;
     let bestD = Infinity;
-    for (const f of t.frames) {
+    for (const f of tl.frames) {
       const d = Math.abs(minuteOf(f.ts) - min);
       if (d < bestD) {
         bestD = d;
         best = f;
       }
     }
-    return best ?? t.latestImage;
+    return best ?? tl.latestImage;
   };
   const imageAt = (min: number) => {
     const f = frameAt(min);
-    return f ? `/api/frames/${f.id}/image?token=${encodeURIComponent(token)}&v=${f.id}` : null;
+    return f ? `/api/frames/${f.id}/image?token=${encodeURIComponent(token)}&device=${encodeURIComponent(deviceId())}&v=${f.id}` : null;
   };
   const frameIdAt = (min: number) => frameAt(min)?.id ?? null;
-  return { source: "live", recording, now, nowMin: minuteOf(nowTs), dayStart, dayEnd, windows, laneIds, stretches, notifications, stats, imageAt, frameIdAt, liveBoxes: boxesOf(t.latest?.analysis), liveWindows: t.latest ? seenOf(t.latest.analysis, now) : null };
+  return { source: "live", recording, now, nowMin: minuteOf(nowTs), dayStart, dayEnd, windows, laneIds, stretches, notifications, stats, imageAt, frameIdAt, liveBoxes: boxesOf(tl.latest?.analysis), liveWindows: tl.latest ? seenOf(tl.latest.analysis, now) : null };
 }
 
 export function useTimeline(pollMs: number): { day: Day | null; error: string | null; refresh: () => void } {
+  const lang = useLang();
   const [day, setDay] = useState<Day | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -127,7 +129,7 @@ export function useTimeline(pollMs: number): { day: Day | null; error: string | 
       stop = true;
       window.clearInterval(id);
     };
-  }, [pollMs, tick]);
+  }, [pollMs, tick, lang]);
   return { day, error, refresh: () => setTick((n) => n + 1) };
 }
 
@@ -149,7 +151,7 @@ export function useFrameAnalysis(frameId: number | null): { boxes: Box[]; window
   useEffect(() => {
     if (frameId === null) return setState({ boxes: [], windows: null });
     let stop = false;
-    api<{ analysis: Analysis | null }>(`/api/frames/${frameId}/analysis`)
+    api<{ analysis: Analysis | null }>(`/api/frames/${frameId}/analysis?device=${encodeURIComponent(deviceId())}`)
       .then((r) => !stop && setState({ boxes: boxesOf(r.analysis), windows: r.analysis ? seenOf(r.analysis, "") : null }))
       .catch(() => !stop && setState({ boxes: [], windows: null }));
     return () => {

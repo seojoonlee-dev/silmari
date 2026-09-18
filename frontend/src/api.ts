@@ -61,5 +61,8 @@ export const chatHistory = (device: string) => api<{ ok: true; turns: ChatTurn[]
 export const ask = (device: string, question: string, at: number | null, history: { q: string; a: string }[]) =>
   api<AskResult>("/api/ask", { method: "POST", body: JSON.stringify({ device, question, at, history }) });
 
+export const setSettings = (device: string, lang: "en" | "ko") =>
+  api<{ ok: true }>("/api/settings", { method: "POST", body: JSON.stringify({ device, lang }) });
+
 export const resetDevice = (device: string) =>
   api<{ ok: true; deleted: Record<string, number> }>(`/api/device?device=${encodeURIComponent(device)}`, { method: "DELETE" });
