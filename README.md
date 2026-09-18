@@ -1,5 +1,8 @@
 # Silmari
 
+<img width="2400" height="1800" alt="silmari-대표화면" src="https://github.com/user-attachments/assets/b41d9eea-5d78-4de5-a4c1-99176830cdf6" />
+
+
 Built in one night for the GDGoC Korea University BYPP Hackathon (September 18–19, 2026).
 
 *Silmari* (실마리) is the loose end of a thread, and figuratively the clue that lets you untangle something.
