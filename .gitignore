@@ -3,4 +3,9 @@ dist
 *.log
 .env
 .env.*
+!.env.example
 .DS_Store
+.venv
+__pycache__
+*.pyc
+deploy.env
