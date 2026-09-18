@@ -15,7 +15,7 @@ FUNNEL_PORT=${FUNNEL_PORT:-8443}
 
 rsync -az --delete \
   --exclude .git --exclude node_modules --exclude dist --exclude .venv --exclude __pycache__ \
-  --exclude .env --exclude '.env.*' --exclude deploy.env --exclude .canvas \
+  --exclude .env --exclude '.env.*' --exclude deploy.env --exclude .canvas --exclude /backend/data \
   "$HERE/" "$HOST:$REMOTE_DIR/"
 
 ssh "$HOST" bash -s "$REMOTE_DIR" "$PORT" "$FUNNEL_PORT" <<'REMOTE'
