@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS stretches (
 );
 CREATE INDEX IF NOT EXISTS stretches_device ON stretches(device);
 
+CREATE TABLE IF NOT EXISTS settings (
+  device TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (device, key)
+);
+
 CREATE TABLE IF NOT EXISTS chats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   device TEXT NOT NULL,
@@ -121,6 +128,15 @@ class Store:
             )
             self.db.commit()
             return int(cur.lastrowid)
+
+    def old_frame_paths(self, before: float) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT path FROM frames WHERE ts<? AND path IS NOT NULL", (before,)).fetchall()]
+
+    def delete_frames_before(self, before: float) -> int:
+        with self.lock:
+            n = self.db.execute("DELETE FROM frames WHERE ts<?", (before,)).rowcount
+            self.db.commit()
+            return n
 
     def set_analysis(self, frame_id: int, analysis: dict) -> None:
         with self.lock:
@@ -265,11 +281,26 @@ class Store:
         """Remove every row for a device. Frame files are removed by the caller."""
         with self.lock:
             counts = {}
-            for table in ("frames", "windows", "stretches", "notifications", "chats"):
+            for table in ("frames", "windows", "stretches", "notifications", "chats", "settings"):
                 counts[table] = self.db.execute(f"SELECT COUNT(*) FROM {table} WHERE device=?", (device,)).fetchone()[0]
                 self.db.execute(f"DELETE FROM {table} WHERE device=?", (device,))
             self.db.commit()
             return counts
+
+    # -- settings --
+    def setting(self, device: str, key: str, default: str = "") -> str:
+        r = self.db.execute("SELECT value FROM settings WHERE device=? AND key=?", (device, key)).fetchone()
+        return r["value"] if r else default
+
+    def set_setting(self, device: str, key: str, value: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT INTO settings(device, key, value) VALUES (?,?,?) ON CONFLICT(device, key) DO UPDATE SET value=excluded.value", (device, key, value))
+            self.db.commit()
+
+    def clear_narratives(self, device: str) -> None:
+        with self.lock:
+            self.db.execute("UPDATE stretches SET narrative=NULL, questions=NULL, summarized_n=NULL, summarized_at=NULL WHERE device=?", (device,))
+            self.db.commit()
 
     # -- chats --
     def add_chat(self, device: str, ts: float, at: float | None, question: str, answer: str, cites: list[dict]) -> int:

@@ -42,8 +42,9 @@ Return ONLY a JSON object of this exact shape:
 }
 
 Rules:
-- "type" is one of: browser, editor, terminal, notes, music, video, chat, mail, calendar, files,
-  design, document, other. NEVER guess a product or brand name; a custom app that looks like a
+- "type" is one of: browser, editor, terminal, notes, music (any music player: tracks, albums,
+  playback controls), video, chat, mail, calendar, files (a file manager: Explorer, Finder),
+  design, document (word processor, slides, spreadsheet), other. NEVER guess a product or brand name; a custom app that looks like a
   known product is still just its type. A terminal emulator (monospace text on a dark background,
   a shell prompt, command output, or a running text program such as an AI coding assistant's
   transcript) is ALWAYS type "terminal", never "editor", "notes" or "chat".
@@ -51,6 +52,9 @@ Rules:
 - "what": the specific content that tells THIS window apart from another of the same type: the
   document or file path, the web page and site, the note name, the track and artist, the running
   program. Quote what you can read; never invent.
+- A window that is PARTLY hidden behind another window is still visible: list it, and give its
+  full rectangle including the hidden part as best you can. System bars (taskbar, dock, menu bar),
+  desktop icons and wallpaper are never windows.
 - One entry per visible TOP-LEVEL application window. Panels, sidebars, split panes, tabs and
   embedded terminals INSIDE an application (an editor's terminal panel, its file tree, a browser's
   tabs) are parts of that ONE window, never separate entries. On a tiled desktop the screen is
@@ -73,7 +77,9 @@ Rules:
   screen: windows seen inside that picture, and names in its lists, are NOT windows on the screen.
 - "bbox": the window's rectangle as [x1, y1, x2, y2], integers 0-1000 where 1000 is the full image
   width or height (top-left is 0,0). Cover the whole window including its title bar.
-- "notifications": toasts, banners, badges with text, popups. Empty list if none.
+- "notifications": toasts, banners, badges with text, popups. "app" is the app the banner itself
+  names or shows an icon for (Slack, Gmail, Mail, Teams, ...), never a guess from the text.
+  Empty list if none.
 - Be concrete and specific everywhere. Never pad with generalities."""
 
 STRETCH_SYSTEM = """You write the memory of one stretch of someone's screen time from a sequence of snapshots
@@ -199,7 +205,7 @@ def _extract_json(text: str) -> dict:
 class Tracker:
     def __init__(
         self, store: Store, llm: AsyncOpenAI, model: str, close_after_s: float = 600.0, analyze_every: int = 5,
-        big_change: float = 20.0, stretch_refresh_s: float = 60.0,
+        big_change: float = 20.0, stretch_refresh_s: float = 60.0, max_model_calls: int = 6,
     ):
         self.store = store
         self.llm = llm
@@ -212,25 +218,43 @@ class Tracker:
         self._since: dict[str, int] = {}
         self._summarizing: set[int] = set()
         self._pending_set: dict[str, tuple[list[str], float]] = {}
+        self._latest_frame: dict[str, int] = {}  # newest uploaded frame per device, for coalescing
+        self._sem = asyncio.Semaphore(max(1, max_model_calls))  # shared across devices
         self._settling: dict[str, int] = {}  # frames skipped since a big change, per device
         self._transition_at: dict[str, float] = {}  # last frame of the old scene before a switch, per device
         self._last_stable_ts: dict[str, float] = {}  # most recent non-transition frame, per device
+
+    async def _create(self, **kw):
+        return await self.llm.chat.completions.create(**kw)
+
+    def lang(self, device: str) -> str:
+        return "ko" if self.store.setting(device, "lang", "en") == "ko" else "en"
+
+    @staticmethod
+    def _lang_note(lang: str, what: str) -> str:
+        return f"\n\nLANGUAGE: write {what} in Korean, polite style (한국어 존댓말, '~했습니다/~입니다'체). Keep file names, paths, commands, URLs and product names as they appear on screen." if lang == "ko" else ""
 
     def lock(self, device: str) -> asyncio.Lock:
         return self._locks.setdefault(device, asyncio.Lock())
 
     def forget(self, device: str) -> None:
         self._since.pop(device, None)
+        self._latest_frame.pop(device, None)
+
+    def note_latest(self, device: str, frame_id: int) -> None:
+        self._latest_frame[device] = frame_id
 
     # ---------------- per-frame analysis ----------------
-    async def analyze_image(self, path: Path, known: list[dict], size: tuple[int, int] | None = None) -> dict:
+    async def analyze_image(self, path: Path, known: list[dict], size: tuple[int, int] | None = None, lang: str = "en") -> dict:
         known_txt = json.dumps(known, ensure_ascii=False) if known else "[]"
-        res = await self.llm.chat.completions.create(
+        system = SYSTEM + self._lang_note(lang, 'the "what", "summary" and "activity" fields')
+        async with self._sem:
+            res = await self._create(
             model=self.model,
             max_tokens=3000,
             temperature=0.1,
             messages=[
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": system},
                 {
                     "role": "user",
                     "content": [
@@ -267,12 +291,22 @@ class Tracker:
                     "bbox": _norm_bbox(w.get("bbox"), size),
                 }
             )
-        # Two boxes of the same type that mostly overlap are one window reported twice.
+        # The same window reported twice: near-identical boxes, or one box inside another of the
+        # same type with the same content. Stacked windows of one type (two browsers) stay separate.
         deduped: list[dict] = []
         for w in wins:
-            if any(d["type"] == w["type"] and (_iou(d["bbox"], w["bbox"]) >= 0.45 or _contains(d["bbox"], w["bbox"])) for d in deduped):
-                continue
-            deduped.append(w)
+            dup = False
+            for d in deduped:
+                if d["type"] != w["type"] or not d["bbox"] or not w["bbox"]:
+                    continue
+                o = _iou(d["bbox"], w["bbox"])
+                a, b = d["bbox"], w["bbox"]
+                inside = (a[0] <= b[0] and a[1] <= b[1] and a[2] >= b[2] and a[3] >= b[3]) or (b[0] <= a[0] and b[1] <= a[1] and b[2] >= a[2] and b[3] >= a[3])
+                if o >= 0.8 or (inside and _similar(d["what"], w["what"]) >= 0.7):
+                    dup = True
+                    break
+            if not dup:
+                deduped.append(w)
         notes = [
             {"app": str(n.get("app") or "")[:60], "text": str(n.get("text") or "")[:300]}
             for n in (data.get("notifications", []) or [])
@@ -312,7 +346,14 @@ class Tracker:
                 self._settling[device] = 0
             self._last_stable_ts[device] = ts
             due = has_image and (self._since.get(device, 0) % self.analyze_every == 0 or stale or waiting or big)
-            if has_image:
+            # Backlog (several devices busy at once): only the newest queued frame of a device is
+            # worth a model call; older ones inherit and the next frame becomes due immediately.
+            if due and self._latest_frame.get(device, frame_id) != frame_id:
+                due = False
+                self._since[device] = 0
+                if waiting:
+                    self._settling[device] = 1  # keep waiting so the next frame is analyzed as a new scene
+            elif has_image:
                 self._since[device] = 1 if due else self._since.get(device, 0) + 1
             if prev is not None and prev.get("transition"):
                 prev = self.store.latest_real_analysis(device)
@@ -326,7 +367,7 @@ class Tracker:
                 else:
                     known = self._known(device, prev)
                     size = (int(frame["width"]), int(frame["height"])) if frame["width"] and frame["height"] else None
-                    analysis = await self.analyze_image(Path(frame["path"]), known, size)
+                    analysis = await self.analyze_image(Path(frame["path"]), known, size, self.lang(device))
             except Exception as e:  # noqa: BLE001
                 log.warning("frame %s analysis failed: %s", frame_id, e)
                 carried = dict(prev) if prev else {"windows": [], "notifications": [], "activity": ""}
@@ -442,6 +483,16 @@ class Tracker:
             if best_score >= 0.6 and len(best_assign) >= min(2, len(windows)):
                 assigned.update(best_assign)
                 members = set(best_layout)
+                # Same slot as an unclaimed member but the model changed its mind about the type: keep
+                # the member's id and its established type (a music player read as "files").
+                taken = set(assigned.values())
+                for i, w in enumerate(windows):
+                    if i in assigned or not w.get("bbox"):
+                        continue
+                    best = max(((_iou(w["bbox"], best_layout[wid]), wid) for wid in members if wid not in taken), default=(0.0, None))
+                    if best[0] >= 0.8 and best[1] is not None:
+                        assigned[i] = best[1]; taken.add(best[1])
+                        w["type"] = info[best[1]]["type"]; w["app"] = APP_LABEL.get(w["type"], "Other")
 
         # Content check WITHIN the adopted layout only: two same-type members that traded slots are
         # put back by their text. Windows of other layouts are never candidates here, so copied
@@ -525,13 +576,24 @@ class Tracker:
                 self.store.set_stretch_summary(int(cur["id"]), activity)
 
     # ---------------- stretch narratives ----------------
+    async def regenerate_all(self, device: str) -> None:
+        """After a language change: rewrite every stretch narrative, a few at a time."""
+        self.store.clear_narratives(device)
+        for _ in range(20):
+            before = sum(1 for r in self.store.all_stretches(device) if r["narrative"] is None)
+            if before == 0:
+                return
+            await self._refresh_narratives(device)
+            if sum(1 for r in self.store.all_stretches(device) if r["narrative"] is None) >= before:
+                return
+
     async def _refresh_narratives(self, device: str) -> None:
         """Write or refresh the narrative of the current stretch (every stretch_refresh_s while it
         has new analyses) and of the last ended stretch that has none yet."""
         now = time.time()
         todo = []
         cur = self.store.current_stretch(device)
-        if cur is not None and (cur["summarized_at"] is None or now - float(cur["summarized_at"]) >= self.stretch_refresh_s):
+        if cur is not None and (cur["summarized_at"] is None or cur["narrative"] is None or now - float(cur["summarized_at"]) >= self.stretch_refresh_s):
             todo.append(cur)
         for r in self.store.all_stretches(device):
             if r["end"] is not None and r["narrative"] is None and (cur is None or r["id"] != cur["id"]):
@@ -573,12 +635,13 @@ class Tracker:
             )
         if not snaps:
             return
-        res = await self.llm.chat.completions.create(
+        async with self._sem:
+            res = await self._create(
             model=self.model,
             max_tokens=900,
             temperature=0.2,
             messages=[
-                {"role": "system", "content": STRETCH_SYSTEM},
+                {"role": "system", "content": STRETCH_SYSTEM + self._lang_note(self.lang(device), 'the "narrative", every "left_here" text and every question')},
                 {"role": "user", "content": "Snapshots, oldest first:\n" + json.dumps(snaps, ensure_ascii=False)},
             ],
             # schema-constrained: the model otherwise shortens keys ("narr") or leaves the text empty
@@ -641,7 +704,7 @@ class Tracker:
             for n in self.store.notifications(device)
         ]
         material = {"stretches": stretches, "snapshots_near_the_moment": snaps[-24:], "notifications": notes}
-        messages = [{"role": "system", "content": ASK_SYSTEM}]
+        messages = [{"role": "system", "content": ASK_SYSTEM + self._lang_note(self.lang(device), "your answer")}]
         # Earlier turns of this device's conversation, kept server-side so they survive reloads.
         turns = [{"q": r["question"], "a": r["answer"]} for r in self.store.chats(device, limit=8)] or history
         for h in turns[-8:]:
@@ -685,7 +748,8 @@ class Tracker:
                 continue
         content.append({"type": "text", "text": f"QUESTION: {question.strip()[:1000]}"})
         messages.append({"role": "user", "content": content})
-        res = await self.llm.chat.completions.create(
+        async with self._sem:
+            res = await self._create(
             model=self.model, max_tokens=900, temperature=0.2, messages=messages,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )

@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 import json
+import logging
 import re
 import shutil
 
@@ -41,12 +42,17 @@ CLOSE_AFTER_S = float(os.environ.get("CLOSE_AFTER_S", "600"))
 ANALYZE_EVERY = int(os.environ.get("ANALYZE_EVERY", "5"))  # run the model on every Nth image frame
 BIG_CHANGE = float(os.environ.get("BIG_CHANGE", "20"))  # mean pixel diff (0-255) that forces analysis, e.g. a workspace switch
 STRETCH_REFRESH_S = float(os.environ.get("STRETCH_REFRESH_S", "60"))  # how often the open stretch's narrative is rewritten
+MAX_MODEL_CALLS = int(os.environ.get("MAX_MODEL_CALLS", "6"))  # concurrent vision-model requests across all devices
+RETAIN_H = float(os.environ.get("RETAIN_H", "24"))  # frames older than this are deleted
 SIGHTING_GAP_S = float(os.environ.get("SIGHTING_GAP_S", "15"))  # unseen longer than this breaks a lane's visible run
 
 llm = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="none")
 bearer = HTTPBearer(auto_error=False)
 store = Store(DATA_DIR / "silmari.db")
-tracker = Tracker(store, llm, LLM_MODEL, close_after_s=CLOSE_AFTER_S, analyze_every=ANALYZE_EVERY, big_change=BIG_CHANGE, stretch_refresh_s=STRETCH_REFRESH_S)
+tracker = Tracker(
+    store, llm, LLM_MODEL, close_after_s=CLOSE_AFTER_S, analyze_every=ANALYZE_EVERY, big_change=BIG_CHANGE,
+    stretch_refresh_s=STRETCH_REFRESH_S, max_model_calls=MAX_MODEL_CALLS,
+)
 
 app = FastAPI(title="silmari-backend")
 app.add_middleware(
@@ -55,6 +61,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+async def _retention_loop() -> None:
+    """Delete frame files and rows older than RETAIN_H, every 10 minutes."""
+    while True:
+        try:
+            cutoff = time.time() - RETAIN_H * 3600
+            for p in store.old_frame_paths(cutoff):
+                Path(p).unlink(missing_ok=True)
+            store.delete_frames_before(cutoff)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("silmari").warning("retention: %s", e)
+        await asyncio.sleep(600)
+
+
+@app.on_event("startup")
+async def _start_background() -> None:
+    asyncio.create_task(_retention_loop())
 
 
 def require_auth(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
@@ -76,6 +100,11 @@ DEVICE_RE = r"^[A-Za-z0-9_-]{4,64}$"
 
 class LoginBody(BaseModel):
     password: str
+
+
+class SettingsBody(BaseModel):
+    device: str
+    lang: str
 
 
 class AskBody(BaseModel):
@@ -148,6 +177,7 @@ async def post_frame(
         p.write_bytes(await image.read())
         path = str(p)
     frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff)
+    tracker.note_latest(device, frame_id)
     background.add_task(tracker.process, device, frame_id)
     return {"ok": True, "id": frame_id}
 
@@ -163,11 +193,25 @@ async def delete_device(device: str = Query(pattern=DEVICE_RE)):
 
 
 @app.get("/api/frames/{frame_id}/image", dependencies=[Depends(require_auth_or_query)])
-async def frame_image(frame_id: int):
+async def frame_image(frame_id: int, device: str = Query(pattern=DEVICE_RE)):
+    """Frames are addressed by id but scoped to the device that recorded them: every user shares
+    the password, so the (unguessable) device id is what keeps one person's screen from another."""
     row = store.frame(frame_id)
-    if row is None or not row["path"]:
+    if row is None or not row["path"] or row["device"] != device:
         raise HTTPException(status_code=404, detail="no image")
     return FileResponse(row["path"], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/settings", dependencies=[Depends(require_auth)])
+async def set_settings(body: SettingsBody):
+    """Per-device settings. Changing the language rewrites the stretch narratives in that language."""
+    if not re.fullmatch(DEVICE_RE, body.device) or body.lang not in ("en", "ko"):
+        raise HTTPException(status_code=400, detail="bad request")
+    changed = store.setting(body.device, "lang", "en") != body.lang
+    store.set_setting(body.device, "lang", body.lang)
+    if changed:
+        asyncio.create_task(tracker.regenerate_all(body.device))
+    return {"ok": True, "lang": body.lang, "regenerating": changed}
 
 
 @app.post("/api/ask", dependencies=[Depends(require_auth)])
@@ -193,10 +237,10 @@ async def chat_history(device: str = Query(pattern=DEVICE_RE)):
 
 
 @app.get("/api/frames/{frame_id}/analysis", dependencies=[Depends(require_auth)])
-async def frame_analysis(frame_id: int):
+async def frame_analysis(frame_id: int, device: str = Query(pattern=DEVICE_RE)):
     """What the model saw in this frame (or the analysis it inherited): windows with boxes."""
     row = store.frame(frame_id)
-    if row is None:
+    if row is None or row["device"] != device:
         raise HTTPException(status_code=404, detail="no frame")
     return {"ok": True, "id": frame_id, "ts": row["ts"], "analysis": json.loads(row["analysis"]) if row["analysis"] else None}
 
