@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Day } from "../model";
-import { CATEGORY_COLOR, fmtDuration, fromMin, laneLabel, midpoint, toMin } from "../model";
+import { fmtDuration, fromMin, laneLabel, midpoint, toMin, windowColor } from "../model";
 
 // Tick marks measured from the start of the range, at the coarsest step that gives about 6 to 8 labels.
 function ticksFor(start: string, end: string): string[] {
@@ -12,14 +12,43 @@ function ticksFor(start: string, end: string): string[] {
   return out;
 }
 
-const LEGEND: [string, keyof typeof CATEGORY_COLOR][] = [["Focused work", "work"], ["Messages", "comms"], ["Meetings", "meet"], ["Drift", "leisure"]];
 
-export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number; onSelect: (i: number) => void }) {
-  const { dayStart: DAY_START, dayEnd: DAY_END, now: NOW, stretches: STRETCHES, windows: WINDOWS, laneIds: LANE_IDS, stats: STATS } = day;
+type Props = {
+  day: Day;
+  /** playhead position in fractional minutes of the day */
+  playMin: number;
+  /** the fixed playhead position, or null when nothing is pinned */
+  pinnedAt: number | null;
+  /** the transient hover position, or null when the pointer is off the track */
+  hoverAt: number | null;
+  /** transient position while the pointer moves over the track; null when it leaves */
+  onHover: (min: number | null) => void;
+  /** fix the playhead; null means back to live */
+  onPin: (min: number | null) => void;
+};
+
+export default function Timeline({ day, playMin, pinnedAt, hoverAt, onHover, onPin }: Props) {
+  const { dayStart: DAY_START, dayEnd: DAY_END, stretches: STRETCHES, windows: WINDOWS, laneIds: LANE_IDS, stats: STATS } = day;
   const span = Math.max(1, toMin(DAY_END) - toMin(DAY_START));
   const pct = (t: string) => ((toMin(t) - toMin(DAY_START)) / span) * 100;
-  const live = sel === STRETCHES.length - 1;
-  const playAt = live ? NOW : midpoint(STRETCHES[sel]);
+  const pctMin = (m: number) => ((m - toMin(DAY_START)) / span) * 100;
+  const sel = Math.max(0, STRETCHES.findLastIndex((s) => toMin(s.start) <= playMin));
+  const trackRef = useRef<HTMLDivElement>(null);
+  const cardsRef = useRef<HTMLDivElement>(null);
+  // keep the selected card in view as the playhead moves
+  useEffect(() => {
+    const el = cardsRef.current?.querySelector<HTMLElement>(".scard.selected");
+    el?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+  }, [sel]);
+
+  // Hovering the lanes previews that moment; clicking pins the playhead there. Past the end = live.
+  function minAtPointer(e: React.PointerEvent | React.MouseEvent): number | null {
+    const box = trackRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return null;
+    const f = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+    return toMin(DAY_START) + f * span;
+  }
+  const clampLive = (m: number | null) => (m === null || m >= day.nowMin ? null : m);
   const hours = ticksFor(DAY_START, DAY_END);
   const lanesRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number } | null>(null);
@@ -34,7 +63,7 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
   const hoverCard = hovered && hover && (() => {
     const wins = hovered.windowIds.map((id) => WINDOWS.find((w) => w.id === id)).filter((w): w is NonNullable<typeof w> => !!w);
     const notes = day.notifications.filter((n) => toMin(n.time) >= toMin(hovered.start) && toMin(n.time) < toMin(hovered.end));
-    const img = day.imageAt ? day.imageAt(midpoint(hovered)) : null;
+    const img = day.imageAt ? day.imageAt(toMin(midpoint(hovered))) : null;
     const width = lanesRef.current?.clientWidth ?? 800;
     const left = Math.min(Math.max(hover.x, 170), width - 170);
     return (
@@ -49,7 +78,7 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
           <div className="hovercard-list">
             {wins.map((w) => (
               <div key={w.id} className="win-row hovercard-row">
-                <span className="dot" style={{ background: CATEGORY_COLOR[w.category] }} />
+                <span className="dot" style={{ background: windowColor(day, w.id) }} />
                 <span className="win-app">{w.app}</span>
                 <span className="muted ellipsis">{w.what}</span>
               </div>
@@ -76,28 +105,33 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
             {STATS.map((s) => <span key={s.label}><b className="mono">{s.value}</b> {s.label}</span>)}
           </div>
         </div>
-        <div className="legend">
-          {LEGEND.map(([n, c]) => <span key={c}><span className="dot" style={{ background: CATEGORY_COLOR[c] }} />{n}</span>)}
-          <span className="sep">|</span>
-          <span>One lane per window · click a stretch to rewind</span>
-        </div>
+        <div className="legend"><span>One lane per window, drawn while it was on screen · hover to scrub, click to pin</span></div>
       </div>
 
       <div className="lanes" ref={lanesRef} onMouseLeave={() => setHover(null)}>
         {hoverCard}
+        <div className="lanes-scroll">
+        <div className="lanes-content">
         <div className="lane">
           <span />
           <div className="ticks">
             {hours.map((h) => <span key={h} className="mono" style={{ left: `${pct(h)}%` }}>{h}</span>)}
           </div>
         </div>
+        {LANE_IDS.length === 0 && (
+          <div className="lane"><span /><div className="lane-track lane-empty">No windows yet. Start recording to fill the timeline.</div></div>
+        )}
         {LANE_IDS.map((id) => (
           <div key={id} className="lane">
             <span className="lane-name ellipsis">{laneLabel(day, id)}</span>
             <div className="lane-track">
-              {WINDOWS.filter((w) => w.id === id).map((w) => (
-                <div key={w.start} title={w.what} className="bar" style={{ left: `${pct(w.start)}%`, width: `calc(${pct(w.end) - pct(w.start)}% - 2px)`, background: CATEGORY_COLOR[w.category] }} />
-              ))}
+              {WINDOWS.filter((w) => w.id === id).map((w) =>
+                w.visible
+                  ? w.visible.map(([a, b], k) => (
+                      <div key={`${w.start}-${k}`} title={w.what} className="bar" style={{ left: `${pctMin(a)}%`, width: `max(2px, ${pctMin(b) - pctMin(a)}%)`, background: windowColor(day, w.id) }} />
+                    ))
+                  : <div key={w.start} title={w.what} className="bar" style={{ left: `${pct(w.start)}%`, width: `calc(${pct(w.end) - pct(w.start)}% - 2px)`, background: windowColor(day, w.id) }} />,
+              )}
             </div>
           </div>
         ))}
@@ -105,34 +139,59 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
           <span />
           <div className="lane-track" style={{ background: "transparent" }}>
             {STRETCHES.map((s, i) => (
-              <button
+              <div
                 key={s.start}
                 className={"stretch" + (i === sel ? " selected" : "")}
-                aria-label={`${s.start} to ${s.end}: ${s.summary}`}
                 style={{ left: `${pct(s.start)}%`, width: `${pct(s.end) - pct(s.start)}%` }}
-                onClick={() => onSelect(i)}
                 onMouseEnter={(e) => onMove(i, e)}
                 onMouseMove={(e) => onMove(i, e)}
-                onFocus={() => setHover({ i, x: (lanesRef.current?.clientWidth ?? 800) / 2 })}
-                onBlur={() => setHover(null)}
               />
             ))}
-            <div className={"playhead" + (live ? "" : " past")} style={{ left: `${pct(playAt)}%` }} />
+            <div
+              ref={trackRef}
+              className="scrub-surface"
+              role="slider"
+              aria-label="Scrub the day"
+              aria-valuemin={toMin(DAY_START)}
+              aria-valuemax={Math.round(day.nowMin)}
+              aria-valuenow={Math.round(playMin)}
+              tabIndex={0}
+              onPointerMove={(e) => onHover(clampLive(minAtPointer(e)))}
+              onPointerLeave={() => onHover(null)}
+              onClick={(e) => onPin(clampLive(minAtPointer(e)))}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft") onPin(clampLive(playMin - 0.25));
+                if (e.key === "ArrowRight") onPin(clampLive(playMin + 0.25));
+                if (e.key === "End") onPin(null);
+              }}
+            />
+            {/* live marker when nothing is pinned */}
+            {pinnedAt === null && <div className="playhead live" style={{ left: `${pctMin(day.nowMin)}%` }} />}
+            {/* the fixed pin: ink line, ringed knob that fills in when set (keyed so it replays per pin) */}
+            {pinnedAt !== null && (
+              <div key={pinnedAt} className="playhead pinned" style={{ left: `${pctMin(pinnedAt)}%` }}>
+                <span className="playhead-knob" />
+              </div>
+            )}
+            {/* the unfixed pin: a dashed preview that follows the pointer */}
+            {hoverAt !== null && (
+              <div className="playhead hovering" style={{ left: `${pctMin(hoverAt)}%` }}>
+                <span className="playhead-knob" />
+              </div>
+            )}
           </div>
+        </div>
+        </div>
         </div>
       </div>
 
-      <div className="cards">
-        {STRETCHES.slice(-5).map((s, k) => {
-          const i = STRETCHES.length - 5 + k;
+      <div className="cards" ref={cardsRef}>
+        {STRETCHES.map((s, i) => {
           const apps = s.windowIds;
           return (
-            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onSelect(i)}>
+            <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onPin((toMin(s.start) + toMin(s.end)) / 2)}>
               <div className="row-gap muted small"><span className="mono">{s.start}–{s.end}</span>· {apps.length} window{apps.length === 1 ? "" : "s"}</div>
               <div className="scard-summary">{s.summary}</div>
-              <div className="row-gap wrap small muted">
-                {apps.map((id) => { const w = WINDOWS.find((x) => x.id === id); return <span key={id} className="row-gap" style={{ gap: 4 }}><span className="dot dot-sm" style={{ background: CATEGORY_COLOR[w?.category ?? "other"] }} />{laneLabel(day, id)}</span>; })}
-              </div>
             </button>
           );
         })}

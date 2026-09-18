@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { App } from "../data/sample";
-import type { Win } from "../model";
-import { CATEGORY_COLOR } from "../model";
+import type { Box, Win } from "../model";
 
 const KNOWN_APPS: App[] = ["Word", "Chrome", "VS Code", "Slack", "Meet", "YouTube"];
 const asApp = (a: string): App => (KNOWN_APPS.includes(a as App) ? (a as App) : "Chrome");
@@ -108,46 +108,140 @@ function Tile({ w }: { w: Win }) {
   );
 }
 
-type Props = { windows: Win[]; caption: string; rewound: boolean; imageUrl?: string | null; stream?: MediaStream | null };
 
-function LiveVideo({ stream }: { stream: MediaStream }) {
+type Rect = { left: number; top: number; width: number; height: number };
+
+/** Where the letterboxed media actually paints inside its box, so overlays line up. */
+function contentRect(el: HTMLElement, nw: number, nh: number): Rect | null {
+  if (!nw || !nh) return null;
+  const W = el.clientWidth, H = el.clientHeight;
+  const scale = Math.min(W / nw, H / nh);
+  const width = nw * scale, height = nh * scale;
+  return { left: (W - width) / 2, top: (H - height) / 2, width, height };
+}
+
+function LiveVideo({ stream, onRect }: { stream: MediaStream; onRect: (r: Rect | null) => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
     v.srcObject = stream;
     void v.play().catch(() => {});
+    const update = () => onRect(contentRect(v, v.videoWidth, v.videoHeight));
+    update();
+    v.addEventListener("loadedmetadata", update);
+    v.addEventListener("resize", update);
+    window.addEventListener("resize", update);
+    const ro = new ResizeObserver(update);
+    ro.observe(v);
     return () => {
       v.srcObject = null;
+      v.removeEventListener("loadedmetadata", update);
+      v.removeEventListener("resize", update);
+      window.removeEventListener("resize", update);
+      ro.disconnect();
     };
-  }, [stream]);
+  }, [stream, onRect]);
   return <video ref={ref} className="preview-img" muted playsInline aria-label="Live screen" />;
 }
 
-export default function Preview({ windows, caption, rewound, imageUrl, stream }: Props) {
+function SavedFrame({ url, alt, onRect }: { url: string; alt: string; onRect: (r: Rect | null) => void }) {
+  const ref = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const update = () => ref.current && onRect(contentRect(ref.current, ref.current.naturalWidth, ref.current.naturalHeight));
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [onRect]);
+  return <img ref={ref} className="preview-img" src={url} alt={alt} onLoad={() => ref.current && onRect(contentRect(ref.current, ref.current.naturalWidth, ref.current.naturalHeight))} />;
+}
+
+type Props = {
+  windows: Win[];
+  caption: string;
+  rewound: boolean;
+  imageUrl?: string | null;
+  stream?: MediaStream | null;
+  boxes?: Box[];
+  colorOf: (id: string) => string;
+  /** live view while not recording: black preview, nothing listed */
+  blank?: boolean;
+};
+
+export default function Preview({ windows, caption, rewound, imageUrl, stream, boxes = [], colorOf, blank = false }: Props) {
   const cols = windows.length <= 1 ? 1 : 2;
   const [openId, setOpenId] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [rect, setRect] = useState<Rect | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  // The summary follows the cursor, drawn above every box; flipped near the right/bottom edges.
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  const hoveredBox = hoverId ? boxes.find((b) => b.id === hoverId) : null;
   // Live: the screen share itself. Rewound: the saved frame from that time. Otherwise the sample tiles.
-  const showVideo = !rewound && !!stream;
-  const showImage = !showVideo && !!imageUrl;
+  const showVideo = !blank && !rewound && !!stream;
+  const showImage = !blank && !showVideo && !!imageUrl;
+  // Overlapping boxes: draw the largest first so the smallest window under the pointer takes the
+  // hover. A small window over a big one is almost always the one in front.
+  const area = (b: Box) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]);
+  const ordered = [...boxes].sort((a, b) => area(b) - area(a));
   return (
-    <>
+    <section className="left">
       <div className="row-between">
         <div className="label">Screen · this device</div>
         <span className="mono muted small">{caption}</span>
       </div>
-      <div className="preview">
-        {showVideo ? (
-          <LiveVideo stream={stream!} />
+      <div
+        className="preview"
+        ref={previewRef}
+        onMouseMove={(e) => setCursor({ x: e.clientX, y: e.clientY })}
+        onMouseLeave={() => setCursor(null)}
+      >
+        {blank ? (
+          <div className="preview-blank">Not recording</div>
+        ) : showVideo ? (
+          <LiveVideo stream={stream!} onRect={setRect} />
         ) : showImage ? (
-          <img className="preview-img" src={imageUrl!} alt={rewound ? "Saved frame" : "Last saved frame"} />
+          <SavedFrame url={imageUrl!} alt={rewound ? "Saved frame" : "Last saved frame"} onRect={setRect} />
         ) : (
           <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
             {windows.map((w) => <Tile key={w.id} w={w} />)}
           </div>
         )}
-        {rewound && <span className="chip chip-ink mono preview-tag">Rewound</span>}
+        {(showVideo || showImage) && rect && ordered.map((b, k) => {
+          const [x1, y1, x2, y2] = b.bbox;
+          const on = hoverId === b.id;
+          return (
+            <div
+              key={b.id}
+              className={"box" + (on ? " on" : "")}
+              style={{
+                left: rect.left + x1 * rect.width, top: rect.top + y1 * rect.height,
+                width: (x2 - x1) * rect.width, height: (y2 - y1) * rect.height,
+                borderColor: colorOf(b.id), background: on ? colorOf(b.id) + "22" : "transparent",
+                zIndex: 3 + k,
+              }}
+              onMouseEnter={() => setHoverId(b.id)}
+              onMouseLeave={() => setHoverId(null)}
+            >
+              <span className="box-label" style={{ background: colorOf(b.id) }}>{b.app}</span>
+            </div>
+          );
+        })}
         {showVideo && <span className="chip chip-ink mono preview-tag">Live</span>}
+        {hoveredBox && cursor && createPortal(
+          // Fixed to the viewport and portaled to the body: above everything, never clipped by the
+          // preview. Always to the right of the cursor; flips upward only near the bottom of the window.
+          <div
+            className="box-tip"
+            style={{
+              position: "fixed", left: cursor.x + 14, top: cursor.y + (cursor.y > window.innerHeight - 160 ? -14 : 18),
+              transform: cursor.y > window.innerHeight - 160 ? "translateY(-100%)" : undefined,
+            }}
+          >
+            <b>{hoveredBox.app}</b> <span className="muted">{hoveredBox.what}</span>
+            {hoveredBox.summary && <div className="box-tip-text">{hoveredBox.summary}</div>}
+          </div>,
+          document.body,
+        )}
       </div>
       <div className="card">
         <div className="row-between">
@@ -157,11 +251,17 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream }:
           <span className="muted small">click one for a summary</span>
         </div>
         <div className="win-list">
-          {windows.length === 0 && <div className="muted small">No windows identified yet.</div>}
+          {windows.length === 0 && <div className="muted small">{blank ? "Start recording to see what is on screen." : "No windows identified yet."}</div>}
           {windows.map((w) => (
             <div key={w.id}>
-              <button className={"win-row" + (openId === w.id ? " open" : "")} onClick={() => setOpenId(openId === w.id ? null : w.id)} disabled={!w.summary}>
-                <span className="dot" style={{ background: CATEGORY_COLOR[w.category] }} />
+              <button
+                className={"win-row" + (openId === w.id ? " open" : "") + (hoverId === w.id ? " hot" : "")}
+                onClick={() => setOpenId(openId === w.id ? null : w.id)}
+                onMouseEnter={() => setHoverId(w.id)}
+                onMouseLeave={() => setHoverId(null)}
+                disabled={!w.summary}
+              >
+                <span className="dot" style={{ background: colorOf(w.id) }} />
                 <span className="win-app">{w.app}</span>
                 <span className="muted ellipsis">{w.what}</span>
               </button>
@@ -170,6 +270,6 @@ export default function Preview({ windows, caption, rewound, imageUrl, stream }:
           ))}
         </div>
       </div>
-    </>
+    </section>
   );
 }

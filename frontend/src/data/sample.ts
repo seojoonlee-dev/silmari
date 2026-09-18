@@ -1,4 +1,5 @@
-// Sample day used until the backend produces real segments.
+// Sample day. Not shown by default any more: kept for the first-login "how to use" tutorial,
+// where a filled-in screen is worth more than an empty one.
 
 import type { Category, Day, OpenLoop, Stretch } from "../model";
 import { toMin } from "../model";
@@ -157,7 +158,9 @@ const openDuring = (a: string, b: string) =>
 export function sampleDay(): Day {
   return {
     source: "sample",
+    recording: true,
     now: NOW,
+    nowMin: toMin(NOW),
     dayStart: DAY_START,
     dayEnd: DAY_END,
     windows: WINDOWS.map((w) => ({ ...w, category: APP_CATEGORY[w.app] })),
@@ -165,6 +168,8 @@ export function sampleDay(): Day {
     stretches: STRETCHES.map((s) => ({ ...s, windowIds: openDuring(s.start, s.end) })),
     notifications: NOTIFICATIONS,
     stats: STATS,
+    liveBoxes: [],
+    liveWindows: null,
   };
 }
 

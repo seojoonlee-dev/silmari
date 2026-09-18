@@ -1,6 +1,6 @@
 // Screen capture in the browser: getDisplayMedia -> canvas -> JPEG -> POST /api/frames.
-// Frames that look identical to the previous one are sent as "unchanged" without an image,
-// so the server still knows the same windows are open without paying for analysis.
+// Every frame is sent with its image. A difference score against the previous frame goes along
+// so the server can analyze big changes (workspace switches) right away.
 
 import { getToken } from "./api";
 
@@ -12,7 +12,6 @@ export type CaptureStatus =
 
 const MAX_WIDTH = 1280;
 const JPEG_QUALITY = 0.6;
-const DIFF_THRESHOLD = 3.5; // mean abs diff on a 16x16 grey thumbnail, 0..255
 
 export function deviceId(): string {
   const KEY = "silmari.device";
@@ -42,6 +41,8 @@ export class Recorder {
   private intervalMs: number;
   private onStatus: (s: CaptureStatus) => void;
   onStream: ((s: MediaStream | null) => void) | null = null;
+  /** called after every successful upload, so the UI can refresh right away */
+  onUploaded: (() => void) | null = null;
 
   constructor(intervalMs: number, onStatus: (s: CaptureStatus) => void) {
     this.intervalMs = intervalMs;
@@ -116,18 +117,22 @@ export class Recorder {
       const px = tctx.getImageData(0, 0, 16, 16).data;
       const thumb = new Uint8ClampedArray(256);
       for (let i = 0; i < 256; i++) thumb[i] = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3;
-      let unchanged = false;
+      let diff = 255;
       if (this.lastThumb) {
         let sum = 0;
         for (let i = 0; i < 256; i++) sum += Math.abs(thumb[i] - this.lastThumb[i]);
-        unchanged = sum / 256 < DIFF_THRESHOLD;
+        diff = sum / 256;
       }
       this.lastThumb = thumb;
+      const unchanged = false;
 
       const form = new FormData();
       form.set("device", deviceId());
       form.set("ts", String(Date.now() / 1000));
       form.set("unchanged", String(unchanged));
+      form.set("diff", diff.toFixed(1));
+      form.set("width", String(this.canvas.width));
+      form.set("height", String(this.canvas.height));
       if (!unchanged) {
         const blob = await new Promise<Blob | null>((r) => this.canvas.toBlob(r, "image/jpeg", JPEG_QUALITY));
         if (!blob) return;
@@ -139,6 +144,7 @@ export class Recorder {
       else this.frames++;
       this.lastSentAt = Date.now();
       this.emit();
+      this.onUploaded?.();
     } catch (e) {
       this.onStatus({ state: "error", message: String(e) });
     } finally {

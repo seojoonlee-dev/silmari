@@ -1,17 +1,31 @@
 import { useState } from "react";
 import { CANNED_ANSWER, SUGGESTIONS_NOW, SUGGESTIONS_PAST } from "../data/sample";
 import type { Day, Stretch } from "../model";
-import { midpoint, toMin } from "../model";
+import { toMin } from "../model";
 import { IconBack, IconBell, IconClock, IconMail, IconNow, IconSend, IconTab } from "./icons";
 
-type Props = { day: Day; stretch: Stretch; live: boolean; onJumpNow: () => void; onGoTo: (i: number) => void };
+type Props = { day: Day; stretch?: Stretch; time: string; live: boolean; onJumpNow: () => void; onGoTo: (i: number) => void };
 
-export default function Panel({ day, stretch, live, onJumpNow, onGoTo }: Props) {
+export default function Panel({ day, stretch, time, live, onJumpNow, onGoTo }: Props) {
   const NOW = day.now;
+  if (!stretch) {
+    return (
+      <aside className="panel">
+        <div className="panel-head">
+          <span className="mono time-big">{NOW}</span>
+          <span className="now-tag">Now</span>
+        </div>
+        <div className="card">
+          <p className="narrative">Nothing recorded yet.</p>
+          <div className="muted small">Press Start recording, pick a screen, and the first stretch appears within a few seconds. Everything stays on your own server.</div>
+        </div>
+      </aside>
+    );
+  }
   const [question, setQuestion] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
-  const t = live ? NOW : midpoint(stretch);
-  const ago = toMin(NOW) - toMin(t);
+  const t = live ? NOW : time;
+  const ago = Math.max(0, toMin(NOW) - toMin(t));
 
   function ask(q: string) {
     if (!q.trim()) return;
@@ -21,23 +35,25 @@ export default function Panel({ day, stretch, live, onJumpNow, onGoTo }: Props) 
 
   return (
     <aside className="panel">
-      {live ? (
+      {/* One fixed-height row in both states, so scrubbing never shifts the content below it. */}
+      <div className="row-between panel-head-row">
         <div className="panel-head">
-          <span className="mono time-big">{NOW}</span>
-          <span className="now-tag">Now</span>
-          <span className="muted small">on this for {toMin(NOW) - toMin(stretch.start)} min</span>
-        </div>
-      ) : (
-        <div className="row-between">
-          <div className="panel-head">
-            <span className="mono time-big">{t}</span>
+          <span className="mono time-big">{t}</span>
+          {live ? (
+            <>
+              <span className="now-tag">Now</span>
+              <span className="muted small">on this for {toMin(NOW) - toMin(stretch.start)} min</span>
+            </>
+          ) : (
             <span className="muted small">{Math.floor(ago / 60)} h {ago % 60} min ago</span>
-          </div>
-          <button className="btn btn-secondary" onClick={onJumpNow}><IconNow size={14} />Jump to now</button>
+          )}
         </div>
-      )}
+        <button className="btn btn-secondary" onClick={onJumpNow} style={{ visibility: live ? "hidden" : "visible" }} aria-hidden={live} tabIndex={live ? -1 : 0}>
+          <IconNow size={14} />Jump to now
+        </button>
+      </div>
 
-      <div className="card">
+      <div className="card narrative-card">
         <p className="narrative">{stretch.narrative}</p>
         {stretch.then && <div className="muted small row-gap"><IconClock size={14} />{stretch.then}</div>}
       </div>

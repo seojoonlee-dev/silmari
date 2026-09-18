@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
-import { clearToken, getToken, me, type Me } from "./api";
+import { clearToken, getToken, me, resetDevice, type Me } from "./api";
+import { deviceId } from "./capture";
 import Login from "./components/Login";
 import Panel from "./components/Panel";
 import Preview from "./components/Preview";
 import Timeline from "./components/Timeline";
 import Wordmark from "./components/Wordmark";
-import { sampleDay } from "./data/sample";
-import { useRecorder, useTimeline } from "./live";
-import { midpoint, openAt } from "./model";
+import { emptyDay } from "./data/empty";
+import { useFrameAnalysis, useRecorder, useTimeline } from "./live";
+import { fromMin, toMin, windowColor, type Stretch } from "./model";
 
 type Auth = { state: "checking" } | { state: "out" } | { state: "in"; me: Me };
 const CAPTURE_MS = 3000;
 const POLL_MS = 5000;
-const SAMPLE = sampleDay();
+const EMPTY = emptyDay();
 
 export default function App() {
   const [auth, setAuth] = useState<Auth>({ state: "checking" });
@@ -34,20 +35,52 @@ export default function App() {
 
 function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const [menu, setMenu] = useState(false);
-  const [selIdx, setSel] = useState<number | null>(null); // null = now
-  const rec = useRecorder(CAPTURE_MS);
-  const { day: liveDay, error } = useTimeline(POLL_MS);
-  const day = liveDay ?? SAMPLE;
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<number | null>(null); // fixed playhead, fractional minutes; null = live
+  const [hover, setHover] = useState<number | null>(null); // transient preview while hovering the track
+  const scrub = hover ?? pinned;
+  const { day: liveDay, error, refresh } = useTimeline(POLL_MS);
+  // Each upload refreshes the timeline immediately, so a new frame is scrubbable right away.
+  const rec = useRecorder(CAPTURE_MS, refresh);
+  const day = liveDay ?? EMPTY;
 
-  const LAST = day.stretches.length - 1;
-  const sel = selIdx === null || selIdx > LAST ? LAST : selIdx;
-  const live = sel === LAST;
-  const stretch = day.stretches[sel];
-  const t = live ? day.now : midpoint(stretch);
+  const nowMin = day.nowMin;
+  const live = scrub === null || scrub >= nowMin;
+  const tMin = live ? nowMin : scrub;
+  const t = live ? day.now : fromMin(Math.floor(tMin));
+  const sel = Math.max(0, day.stretches.findLastIndex((s) => toMin(s.start) <= tMin));
+  const stretch: Stretch | undefined = day.stretches[sel];
   // Saved frames only when rewinding; while live the preview is the screen share itself
   // (or the last saved frame if not currently recording).
-  const imageUrl = day.imageAt && (!live || !rec.stream) ? day.imageAt(t) : null;
+  const imageUrl = day.imageAt && !live ? day.imageAt(tMin) : null;
+  // What is on screen comes from the frame being shown: the latest analysis while live, the
+  // saved frame's own analysis when rewound. The tracker's open set (lanes) can be wider.
+  const saved = useFrameAnalysis(imageUrl && day.frameIdAt ? day.frameIdAt(tMin) : null);
+  // Live view with no active screen share: black preview and nothing listed.
+  const blank = live && day.source !== "sample" && !rec.stream;
+  const boxes = blank ? [] : imageUrl ? saved.boxes : day.liveBoxes;
+  // Only what the frame being shown actually contains. Nothing is listed for a frame without an analysis.
+  const seen = imageUrl ? saved.windows : day.liveWindows;
+  const onScreen = blank ? [] : (seen ?? []);
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+
+  async function doReset() {
+    setResetting("Deleting…");
+    try {
+      if (rec.status.state === "recording") rec.stop();
+      const r = await resetDevice(deviceId());
+      setPinned(null);
+      setHover(null);
+      refresh();
+      setConfirmReset(false);
+      setMenu(false);
+      setResetting(null);
+      console.info("reset", r.deleted);
+    } catch (e) {
+      setResetting(`Could not reset: ${String(e)}`);
+    }
+  }
 
   const st = rec.status;
   const chip =
@@ -69,7 +102,7 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         <div className="row-gap" style={{ gap: 14 }}>
           <Wordmark />
           <span className="muted small">{dateLabel}</span>
-          {day.source === "sample" && <span className="chip chip-plain">Sample day · start recording to see yours</span>}
+
         </div>
         <div className="row-gap" style={{ gap: 16, position: "relative" }}>
           {st.state === "error" && <span className="small" style={{ color: "#9a2e24" }}>{st.message}</span>}
@@ -80,26 +113,49 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
             <div className="menu" role="menu">
               <div className="small">Connected to <b className="mono">{me.host}</b></div>
               <div className="small muted">Model {me.model}</div>
+              <button className="btn btn-secondary btn-danger" onClick={() => { setMenu(false); setConfirmReset(true); }}>Reset my data</button>
               <button className="btn btn-secondary" onClick={onSignOut}>Sign out</button>
             </div>
           )}
         </div>
       </header>
 
+      {confirmReset && (
+        <div className="modal-backdrop" onClick={() => !resetting && setConfirmReset(false)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-title" onClick={(e) => e.stopPropagation()}>
+            <h2 id="reset-title" className="modal-title">Delete everything from this browser?</h2>
+            <p className="muted">Every screenshot and everything Silmari learned about this device is removed from the server. Other browsers are not affected. This cannot be undone.</p>
+            {resetting && <div className="small" style={{ color: resetting.startsWith("Could") ? "#9a2e24" : undefined }}>{resetting}</div>}
+            <div className="row-gap" style={{ justifyContent: "flex-end" }}>
+              <button className="btn btn-secondary" onClick={() => setConfirmReset(false)} disabled={resetting === "Deleting…"}>Cancel</button>
+              <button className="btn btn-primary btn-danger-solid" onClick={doReset} disabled={resetting === "Deleting…"}>Delete everything</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="main">
-        <section className="left">
-          <Preview
-            windows={openAt(day, t)}
-            caption={!live ? `frame from ${t}` : rec.stream ? "live · every 3 s" : day.source === "live" ? "last saved frame · not recording" : "sample"}
+        <Preview
+            windows={onScreen}
+            caption={!live ? `frame from ${t}` : rec.stream ? "live · every 3 s" : day.source === "live" ? `not recording · last frame ${day.now}` : "not recording"}
             rewound={!live}
             imageUrl={imageUrl}
             stream={rec.stream}
+            boxes={boxes}
+            colorOf={(id) => windowColor(day, id)}
+            blank={blank}
           />
-        </section>
-        <Panel day={day} stretch={stretch} live={live} onJumpNow={() => setSel(null)} onGoTo={setSel} />
+        <Panel
+          day={day}
+          stretch={stretch}
+          time={t}
+          live={live}
+          onJumpNow={() => setPinned(null)}
+          onGoTo={(i) => { const s = day.stretches[i]; if (s) setPinned((toMin(s.start) + toMin(s.end)) / 2); }}
+        />
       </div>
 
-      <Timeline day={day} sel={sel} onSelect={(i) => setSel(i === LAST ? null : i)} />
+      <Timeline day={day} playMin={tMin} pinnedAt={pinned} hoverAt={hover} onHover={setHover} onPin={setPinned} />
     </div>
   );
 }

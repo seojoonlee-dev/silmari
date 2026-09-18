@@ -54,3 +54,6 @@ export async function login(password: string): Promise<void> {
 }
 
 export const me = () => api<Me>("/api/me");
+
+export const resetDevice = (device: string) =>
+  api<{ ok: true; deleted: Record<string, number> }>(`/api/device?device=${encodeURIComponent(device)}`, { method: "DELETE" });
