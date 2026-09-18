@@ -1,11 +1,14 @@
 import { useState } from "react";
-import type { Stretch } from "../data/sample";
-import { CANNED_ANSWER, INTENT, NOW, SUGGESTIONS_NOW, SUGGESTIONS_PAST, midpoint, toMin } from "../data/sample";
+import { CANNED_ANSWER, SUGGESTIONS_NOW, SUGGESTIONS_PAST } from "../data/sample";
+import type { Day, Stretch } from "../model";
+import { midpoint, toMin } from "../model";
 import { IconBack, IconBell, IconClock, IconMail, IconNow, IconSend, IconTab, IconTarget } from "./icons";
 
-type Props = { stretch: Stretch; live: boolean; onJumpNow: () => void; onGoTo: (i: number) => void };
+type Props = { day: Day; stretch: Stretch; live: boolean; onJumpNow: () => void; onGoTo: (i: number) => void };
 
-export default function Panel({ stretch, live, onJumpNow, onGoTo }: Props) {
+export default function Panel({ day, stretch, live, onJumpNow, onGoTo }: Props) {
+  const NOW = day.now;
+  const INTENT = day.intent;
   const [question, setQuestion] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
   const t = live ? NOW : midpoint(stretch);

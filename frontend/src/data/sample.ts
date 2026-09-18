@@ -1,14 +1,9 @@
 // Sample day used until the backend produces real segments.
 
-export type Category = "work" | "comms" | "leisure" | "meet";
-export type App = "Word" | "Chrome" | "VS Code" | "Slack" | "Meet" | "YouTube";
+import type { Category, Day, OpenLoop, Stretch } from "../model";
+import { toMin } from "../model";
 
-export const CATEGORY_COLOR: Record<Category, string> = {
-  work: "#2F6F8F",
-  comms: "#C98A2B",
-  leisure: "#C4564E",
-  meet: "#7A5AB8",
-};
+export type App = "Word" | "Chrome" | "VS Code" | "Slack" | "Meet" | "YouTube";
 
 export const APP_CATEGORY: Record<App, Category> = {
   Word: "work",
@@ -64,19 +59,10 @@ export const NOTIFICATIONS: Notification[] = [
   { time: "13:21", app: "Mail", text: "Prof. Han: office hours moved to Friday", dismissed: true },
 ];
 
-export type OpenLoop = { text: string; meta: string; kind: "message" | "document" | "notification" };
-
 // A stretch is a period where the set of open windows did not change.
-export type Stretch = {
-  start: string;
-  end: string;
-  summary: string;
-  narrative: string;
-  then: string;
-  leftHere: OpenLoop[];
-};
+type SampleStretch = Omit<Stretch, "windowIds">;
 
-export const STRETCHES: Stretch[] = [
+export const STRETCHES: SampleStretch[] = [
   {
     start: "09:02",
     end: "09:30",
@@ -167,13 +153,22 @@ export const CANNED_ANSWER = {
   ],
 };
 
-// ---- time helpers ----
-export const toMin = (t: string) => {
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-};
-export const fromMin = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-export const midpoint = (s: Stretch) => fromMin(Math.floor((toMin(s.start) + toMin(s.end)) / 2));
-export const openAt = (t: string) => WINDOWS.filter((w) => toMin(w.start) <= toMin(t) && toMin(t) < toMin(w.end));
-export const openDuring = (a: string, b: string) =>
+const openDuring = (a: string, b: string) =>
   LANE_IDS.filter((id) => WINDOWS.some((w) => w.id === id && toMin(w.start) < toMin(b) && toMin(w.end) > toMin(a)));
+
+export function sampleDay(): Day {
+  return {
+    source: "sample",
+    now: NOW,
+    dayStart: DAY_START,
+    dayEnd: DAY_END,
+    windows: WINDOWS.map((w) => ({ ...w, category: APP_CATEGORY[w.app] })),
+    laneIds: LANE_IDS,
+    stretches: STRETCHES.map((s) => ({ ...s, windowIds: openDuring(s.start, s.end) })),
+    notifications: NOTIFICATIONS,
+    stats: STATS,
+    intent: INTENT,
+  };
+}
+
+export type { OpenLoop };

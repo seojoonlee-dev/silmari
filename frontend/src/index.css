@@ -22,6 +22,12 @@ b { font-weight: 700; }
 .wordmark span { color: var(--ink); }
 .rec { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; border: 0; background: #fbe9e7; color: #9a2e24; font-size: 12px; font-weight: 600; cursor: pointer; }
 .rec-dot { width: 8px; height: 8px; border-radius: 999px; background: #d9483b; }
+.rec-off { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+.rec-off:hover:not(:disabled) { border-color: var(--accent); }
+.rec-dot-off { background: var(--muted); }
+.menu-btn { border: 0; background: transparent; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.menu-btn:hover { background: var(--ground); }
+.preview-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #2a2d3a; }
 
 .main { flex-grow: 1; padding: 16px 32px; display: flex; gap: 24px; min-height: 0; }
 .left { width: 400px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }

@@ -1,6 +1,10 @@
-import { useState } from "react";
-import type { App, WindowSpan } from "../data/sample";
-import { APP_CATEGORY, CATEGORY_COLOR } from "../data/sample";
+import { useEffect, useRef, useState } from "react";
+import type { App } from "../data/sample";
+import type { Win } from "../model";
+import { CATEGORY_COLOR } from "../model";
+
+const KNOWN_APPS: App[] = ["Word", "Chrome", "VS Code", "Slack", "Meet", "YouTube"];
+const asApp = (a: string): App => (KNOWN_APPS.includes(a as App) ? (a as App) : "Chrome");
 
 const BAR: Record<App, [string, string]> = {
   Word: ["#2B579A", "#FFFFFF"],
@@ -93,19 +97,39 @@ function Body({ app }: { app: App }) {
   }
 }
 
-function Tile({ w }: { w: WindowSpan }) {
-  const [bar, fg] = BAR[w.app];
+function Tile({ w }: { w: Win }) {
+  const app = asApp(w.app);
+  const [bar, fg] = BAR[app];
   return (
-    <div className="tile" style={{ background: BG[w.app] }}>
+    <div className="tile" style={{ background: BG[app] }}>
       <div className="tile-bar" style={{ background: bar, color: fg }}>{w.what}</div>
-      <Body app={w.app} />
+      <Body app={app} />
     </div>
   );
 }
 
-export default function Preview({ windows, caption, rewound }: { windows: WindowSpan[]; caption: string; rewound: boolean }) {
+type Props = { windows: Win[]; caption: string; rewound: boolean; imageUrl?: string | null; stream?: MediaStream | null };
+
+function LiveVideo({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    v.srcObject = stream;
+    void v.play().catch(() => {});
+    return () => {
+      v.srcObject = null;
+    };
+  }, [stream]);
+  return <video ref={ref} className="preview-img" muted playsInline aria-label="Live screen" />;
+}
+
+export default function Preview({ windows, caption, rewound, imageUrl, stream }: Props) {
   const cols = windows.length <= 1 ? 1 : 2;
   const [openId, setOpenId] = useState<string | null>(null);
+  // Live: the screen share itself. Rewound: the saved frame from that time. Otherwise the sample tiles.
+  const showVideo = !rewound && !!stream;
+  const showImage = !showVideo && !!imageUrl;
   return (
     <>
       <div className="row-between">
@@ -113,10 +137,17 @@ export default function Preview({ windows, caption, rewound }: { windows: Window
         <span className="mono muted small">{caption}</span>
       </div>
       <div className="preview">
-        <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-          {windows.map((w) => <Tile key={w.id} w={w} />)}
-        </div>
+        {showVideo ? (
+          <LiveVideo stream={stream!} />
+        ) : showImage ? (
+          <img className="preview-img" src={imageUrl!} alt={rewound ? "Saved frame" : "Last saved frame"} />
+        ) : (
+          <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+            {windows.map((w) => <Tile key={w.id} w={w} />)}
+          </div>
+        )}
         {rewound && <span className="chip chip-ink mono preview-tag">Rewound</span>}
+        {showVideo && <span className="chip chip-ink mono preview-tag">Live</span>}
       </div>
       <div className="card">
         <div className="row-between">
@@ -126,10 +157,11 @@ export default function Preview({ windows, caption, rewound }: { windows: Window
           <span className="muted small">click one for a summary</span>
         </div>
         <div className="win-list">
+          {windows.length === 0 && <div className="muted small">No windows identified yet.</div>}
           {windows.map((w) => (
             <div key={w.id}>
               <button className={"win-row" + (openId === w.id ? " open" : "")} onClick={() => setOpenId(openId === w.id ? null : w.id)} disabled={!w.summary}>
-                <span className="dot" style={{ background: CATEGORY_COLOR[APP_CATEGORY[w.app]] }} />
+                <span className="dot" style={{ background: CATEGORY_COLOR[w.category] }} />
                 <span className="win-app">{w.app}</span>
                 <span className="muted ellipsis">{w.what}</span>
               </button>

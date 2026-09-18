@@ -1,15 +1,16 @@
-import { APP_CATEGORY, CATEGORY_COLOR, DAY_END, DAY_START, LANE_IDS, NOW, STATS, STRETCHES, WINDOWS, laneLabel, midpoint, openDuring, toMin } from "../data/sample";
+import type { Day } from "../model";
+import { CATEGORY_COLOR, laneLabel, midpoint, toMin } from "../model";
 
 const LEGEND: [string, keyof typeof CATEGORY_COLOR][] = [["Focused work", "work"], ["Messages", "comms"], ["Meetings", "meet"], ["Drift", "leisure"]];
 
-export default function Timeline({ sel, onSelect }: { sel: number; onSelect: (i: number) => void }) {
-  const span = toMin(DAY_END) - toMin(DAY_START);
+export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number; onSelect: (i: number) => void }) {
+  const { dayStart: DAY_START, dayEnd: DAY_END, now: NOW, stretches: STRETCHES, windows: WINDOWS, laneIds: LANE_IDS, stats: STATS } = day;
+  const span = Math.max(1, toMin(DAY_END) - toMin(DAY_START));
   const pct = (t: string) => ((toMin(t) - toMin(DAY_START)) / span) * 100;
   const live = sel === STRETCHES.length - 1;
   const playAt = live ? NOW : midpoint(STRETCHES[sel]);
   const hours: string[] = [];
   for (let h = toMin(DAY_START) / 60; h <= toMin(DAY_END) / 60; h++) hours.push(`${String(h).padStart(2, "0")}:00`);
-
   return (
     <section className="timeline">
       <div className="row-between">
@@ -35,10 +36,10 @@ export default function Timeline({ sel, onSelect }: { sel: number; onSelect: (i:
         </div>
         {LANE_IDS.map((id) => (
           <div key={id} className="lane">
-            <span className="lane-name ellipsis">{laneLabel(id)}</span>
+            <span className="lane-name ellipsis">{laneLabel(day, id)}</span>
             <div className="lane-track">
               {WINDOWS.filter((w) => w.id === id).map((w) => (
-                <div key={w.start} title={w.what} className="bar" style={{ left: `${pct(w.start)}%`, width: `calc(${pct(w.end) - pct(w.start)}% - 2px)`, background: CATEGORY_COLOR[APP_CATEGORY[w.app]] }} />
+                <div key={w.start} title={w.what} className="bar" style={{ left: `${pct(w.start)}%`, width: `calc(${pct(w.end) - pct(w.start)}% - 2px)`, background: CATEGORY_COLOR[w.category] }} />
               ))}
             </div>
           </div>
@@ -63,13 +64,13 @@ export default function Timeline({ sel, onSelect }: { sel: number; onSelect: (i:
       <div className="cards">
         {STRETCHES.slice(-5).map((s, k) => {
           const i = STRETCHES.length - 5 + k;
-          const apps = openDuring(s.start, s.end);
+          const apps = s.windowIds;
           return (
             <button key={s.start} className={"scard" + (i === sel ? " selected" : "")} onClick={() => onSelect(i)}>
               <div className="row-gap muted small"><span className="mono">{s.start}–{s.end}</span>· {apps.length} window{apps.length === 1 ? "" : "s"}</div>
               <div className="scard-summary">{s.summary}</div>
               <div className="row-gap wrap small muted">
-                {apps.map((id) => { const w = WINDOWS.find((x) => x.id === id)!; return <span key={id} className="row-gap" style={{ gap: 4 }}><span className="dot dot-sm" style={{ background: CATEGORY_COLOR[APP_CATEGORY[w.app]] }} />{laneLabel(id)}</span>; })}
+                {apps.map((id) => { const w = WINDOWS.find((x) => x.id === id); return <span key={id} className="row-gap" style={{ gap: 4 }}><span className="dot dot-sm" style={{ background: CATEGORY_COLOR[w?.category ?? "other"] }} />{laneLabel(day, id)}</span>; })}
               </div>
             </button>
           );
