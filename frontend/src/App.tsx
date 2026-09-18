@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { clearToken, getToken, me, type Me } from "./api";
 import Login from "./components/Login";
+import Wordmark from "./components/Wordmark";
 import Panel from "./components/Panel";
 import Preview from "./components/Preview";
 import Timeline from "./components/Timeline";
@@ -38,7 +39,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="row-gap" style={{ gap: 14 }}>
-          <div className="wordmark">BYPP</div>
+          <Wordmark />
           <span className="muted small">Thursday 18 Sep</span>
         </div>
         <div className="row-gap" style={{ gap: 16, position: "relative" }}>

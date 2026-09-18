@@ -27,9 +27,9 @@ fi
 cd "$DIR/frontend" && npm ci --silent && npm run build --silent
 cd "$DIR/backend" && uv sync --quiet
 mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/bypp-backend.service <<UNIT
+cat > ~/.config/systemd/user/silmari.service <<UNIT
 [Unit]
-Description=BYPP backend (FastAPI, serves frontend build + API)
+Description=Silmari backend (FastAPI, serves frontend build + API)
 After=network-online.target
 
 [Service]
@@ -41,10 +41,10 @@ Restart=on-failure
 WantedBy=default.target
 UNIT
 systemctl --user daemon-reload
-systemctl --user enable --now bypp-backend.service
-systemctl --user restart bypp-backend.service
+systemctl --user enable --now silmari.service
+systemctl --user restart silmari.service
 sleep 2
-systemctl --user --no-pager status bypp-backend.service | head -5
+systemctl --user --no-pager status silmari.service | head -5
 tailscale funnel --bg --https="$FUNNEL_PORT" "http://127.0.0.1:$PORT"
 tailscale funnel status
 REMOTE

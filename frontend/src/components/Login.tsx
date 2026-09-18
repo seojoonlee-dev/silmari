@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ApiError, login } from "../api";
+import Wordmark from "./Wordmark";
 
 export default function Login({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState("");
@@ -24,8 +25,8 @@ export default function Login({ onDone }: { onDone: () => void }) {
   return (
     <main className="login">
       <form className="login-card" onSubmit={submit}>
-        <div className="wordmark">BYPP</div>
-        <h1 className="login-title">A memory for your screen.</h1>
+        <Wordmark size={28} />
+        <h1 className="login-title">The loose end of your day, within reach.</h1>
         <p className="muted">Enter the password once. This browser stays signed in.</p>
         <label className="login-field">
           Password

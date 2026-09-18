@@ -1,4 +1,6 @@
-# BYPP plan
+# Silmari plan
+
+*Silmari* (실마리): the loose end of a thread, and figuratively the clue that lets you untangle something.
 
 A screen-recording memory aid designed for ADHD working memory and useful to everyone.
 A client captures the screen every few seconds, a vision model on a home GPU turns the

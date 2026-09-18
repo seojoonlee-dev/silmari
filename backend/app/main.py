@@ -30,7 +30,7 @@ SESSION_TOKEN = hmac.new(SECRET.encode(), PASSWORD.encode(), "sha256").hexdigest
 llm = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="none")
 bearer = HTTPBearer(auto_error=False)
 
-app = FastAPI(title="bypp-backend")
+app = FastAPI(title="silmari-backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,7 +52,7 @@ class LoginBody(BaseModel):
 async def health():
     return {
         "ok": True,
-        "service": "bypp-backend",
+        "service": "silmari-backend",
         "host": socket.gethostname(),
         "time": datetime.now(timezone.utc).isoformat(),
     }
