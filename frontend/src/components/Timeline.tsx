@@ -1,5 +1,15 @@
 import type { Day } from "../model";
-import { CATEGORY_COLOR, laneLabel, midpoint, toMin } from "../model";
+import { CATEGORY_COLOR, fromMin, laneLabel, midpoint, toMin } from "../model";
+
+// Tick marks measured from the start of the range, at the coarsest step that gives about 6 to 8 labels.
+function ticksFor(start: string, end: string): string[] {
+  const a = toMin(start), b = toMin(end);
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120];
+  const step = steps.find((s) => (b - a) / s <= 8) ?? 240;
+  const out: string[] = [];
+  for (let m = a; m <= b; m += step) out.push(fromMin(m));
+  return out;
+}
 
 const LEGEND: [string, keyof typeof CATEGORY_COLOR][] = [["Focused work", "work"], ["Messages", "comms"], ["Meetings", "meet"], ["Drift", "leisure"]];
 
@@ -9,8 +19,7 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
   const pct = (t: string) => ((toMin(t) - toMin(DAY_START)) / span) * 100;
   const live = sel === STRETCHES.length - 1;
   const playAt = live ? NOW : midpoint(STRETCHES[sel]);
-  const hours: string[] = [];
-  for (let h = toMin(DAY_START) / 60; h <= toMin(DAY_END) / 60; h++) hours.push(`${String(h).padStart(2, "0")}:00`);
+  const hours = ticksFor(DAY_START, DAY_END);
   return (
     <section className="timeline">
       <div className="row-between">

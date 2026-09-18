@@ -17,10 +17,11 @@ type ApiTimeline = {
 export function fromApi(t: ApiTimeline): Day | null {
   if (t.frames.length === 0 && t.windows.length === 0) return null;
   const now = hhmm(t.now);
+  // The timeline starts when recording started and runs to now, with a little room on the right.
   const first = Math.min(t.now, ...t.windows.map((w) => w.start), ...t.frames.map((f) => f.ts));
-  const dayStart = fromMin(Math.floor(toMin(hhmm(first)) / 60) * 60);
-  const endMin = Math.max(toMin(dayStart) + 60, Math.ceil((toMin(now) + 1) / 60) * 60);
-  const dayEnd = fromMin(Math.min(endMin, 24 * 60 - 1));
+  const dayStart = hhmm(first);
+  const span = Math.max(1, toMin(now) - toMin(dayStart));
+  const dayEnd = fromMin(Math.min(toMin(now) + Math.max(1, Math.round(span * 0.05)), 24 * 60 - 1));
 
   const windows: Win[] = t.windows.map((w) => ({
     id: w.id, app: w.app, what: w.what, category: w.category,
