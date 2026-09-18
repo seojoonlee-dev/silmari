@@ -1,5 +1,6 @@
+import { useRef, useState } from "react";
 import type { Day } from "../model";
-import { CATEGORY_COLOR, fromMin, laneLabel, midpoint, toMin } from "../model";
+import { CATEGORY_COLOR, fmtDuration, fromMin, laneLabel, midpoint, toMin } from "../model";
 
 // Tick marks measured from the start of the range, at the coarsest step that gives about 6 to 8 labels.
 function ticksFor(start: string, end: string): string[] {
@@ -20,6 +21,52 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
   const live = sel === STRETCHES.length - 1;
   const playAt = live ? NOW : midpoint(STRETCHES[sel]);
   const hours = ticksFor(DAY_START, DAY_END);
+  const lanesRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{ i: number; x: number } | null>(null);
+
+  function onMove(i: number, e: React.MouseEvent) {
+    const box = lanesRef.current?.getBoundingClientRect();
+    if (!box) return;
+    setHover({ i, x: e.clientX - box.left });
+  }
+
+  const hovered = hover ? STRETCHES[hover.i] : null;
+  const hoverCard = hovered && hover && (() => {
+    const wins = hovered.windowIds.map((id) => WINDOWS.find((w) => w.id === id)).filter((w): w is NonNullable<typeof w> => !!w);
+    const notes = day.notifications.filter((n) => toMin(n.time) >= toMin(hovered.start) && toMin(n.time) < toMin(hovered.end));
+    const img = day.imageAt ? day.imageAt(midpoint(hovered)) : null;
+    const width = lanesRef.current?.clientWidth ?? 800;
+    const left = Math.min(Math.max(hover.x, 170), width - 170);
+    return (
+      <div className="hovercard" style={{ left }} role="tooltip">
+        <div className="row-between">
+          <span className="mono small">{hovered.start}–{hovered.end}</span>
+          <span className="muted small">{fmtDuration(Math.max(1, toMin(hovered.end) - toMin(hovered.start)))} · {wins.length} window{wins.length === 1 ? "" : "s"}</span>
+        </div>
+        {img && <img className="hovercard-img" src={img} alt="" />}
+        <div className="hovercard-text">{hovered.narrative || hovered.summary}</div>
+        {wins.length > 0 && (
+          <div className="hovercard-list">
+            {wins.map((w) => (
+              <div key={w.id} className="win-row hovercard-row">
+                <span className="dot" style={{ background: CATEGORY_COLOR[w.category] }} />
+                <span className="win-app">{w.app}</span>
+                <span className="muted ellipsis">{w.what}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {notes.length > 0 && (
+          <div className="hovercard-list">
+            {notes.map((n, k) => (
+              <div key={k} className="small"><b>{n.app}</b> {n.time} · {n.text}{n.dismissed ? " (dismissed)" : ""}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  })();
+
   return (
     <section className="timeline">
       <div className="row-between">
@@ -36,7 +83,8 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
         </div>
       </div>
 
-      <div className="lanes">
+      <div className="lanes" ref={lanesRef} onMouseLeave={() => setHover(null)}>
+        {hoverCard}
         <div className="lane">
           <span />
           <div className="ticks">
@@ -63,6 +111,10 @@ export default function Timeline({ day, sel, onSelect }: { day: Day; sel: number
                 aria-label={`${s.start} to ${s.end}: ${s.summary}`}
                 style={{ left: `${pct(s.start)}%`, width: `${pct(s.end) - pct(s.start)}%` }}
                 onClick={() => onSelect(i)}
+                onMouseEnter={(e) => onMove(i, e)}
+                onMouseMove={(e) => onMove(i, e)}
+                onFocus={() => setHover({ i, x: (lanesRef.current?.clientWidth ?? 800) / 2 })}
+                onBlur={() => setHover(null)}
               />
             ))}
             <div className={"playhead" + (live ? "" : " past")} style={{ left: `${pct(playAt)}%` }} />
