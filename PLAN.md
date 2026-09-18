@@ -54,12 +54,18 @@ browser ── https funnel ──> backend :8787 ── http localhost ──> 
 
 Password login returns a bearer token stored in the browser.
 
-## Status
+## Status (2026-09-19, release morning)
 
-- Done: backend with password auth and a Qwen round-trip; frontend UI with a sample day
-  (tiled preview, playhead-driven panel, per-window timeline lanes, canned ask answers);
-  single-origin deploy behind Funnel.
-- Not built: notification tracking beyond detection, content summaries on demand, real
-  `/api/ask`, "back to it" actions, the environment profile, and a first-login "how to use"
-  tutorial. The sample day in `frontend/src/data/sample.ts` is reserved for that tutorial;
-  fresh and reset devices now start from an empty screen.
+- Done: capture in the browser (Chrome, Edge, Firefox, Safari on Windows, macOS, Linux);
+  per-frame vision analysis with generic window types and server-side identity (position on
+  an unchanged scene, layout recognition on a workspace switch, content as fallback);
+  transition-frame skipping; stretches with narratives, "left here" items and suggested
+  questions; notifications with dismissal; real chat that reads screenshots and cites times;
+  scrubber timeline with per-window lanes; stretch detail dialog; Korean/English UI and model
+  output; first-launch guided tour; per-device reset; frame retention (24 h); six-user load
+  test and cross-device isolation check; Windows 11 and macOS stacked-window scenarios.
+- Not built: the environment profile, "back to it" actions, notification tracking beyond
+  detection and dismissal, per-user accounts (everyone shares one password; device ids keep
+  data apart).
+- Demo helpers: `demo/notify.sh slack|gmail|burst` fires mock notifications (dunst on Linux).
+- User guide (Korean): `docs/HOWTO.ko.md`.
