@@ -119,7 +119,9 @@ export class Recorder {
       for (let i = 0; i < 256; i++) thumb[i] = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3;
       // Whole-frame difference, plus the strongest 4x4-block difference: a toast in one corner
       // barely moves the average but lights up one block, and the server analyzes it right away.
-      let diff = 255, local = 255;
+      // Also how many of the 16 blocks changed strongly: a workspace switch changes nearly all of
+      // them even when the two workspaces look alike, while a busy terminal only changes its own.
+      let diff = 255, local = 255, spread = 16;
       if (this.lastThumb) {
         let sum = 0;
         const blocks = new Array(16).fill(0);
@@ -130,6 +132,7 @@ export class Recorder {
         }
         diff = sum / 256;
         local = Math.max(...blocks) / 16;
+        spread = blocks.filter((b) => b / 16 >= 25).length;
       }
       this.lastThumb = thumb;
       const unchanged = false;
@@ -140,6 +143,7 @@ export class Recorder {
       form.set("unchanged", String(unchanged));
       form.set("diff", diff.toFixed(1));
       form.set("local", local.toFixed(1));
+      form.set("spread", String(spread));
       form.set("width", String(this.canvas.width));
       form.set("height", String(this.canvas.height));
       if (!unchanged) {

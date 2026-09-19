@@ -339,7 +339,9 @@ class Tracker:
             prev = json.loads(prev_row["analysis"]) if prev_row else None
             stale = prev is None or not prev.get("windows") or any(not w.get("bbox") for w in prev["windows"])
             diff = float(frame["diff"]) if frame["diff"] is not None else None
-            big = diff is not None and diff >= self.big_change
+            # a switch is a big mean change, or a moderate change spread over nearly the whole screen
+            spread = int(frame["spread"]) if frame["spread"] is not None else None
+            big = (diff is not None and diff >= self.big_change) or (spread is not None and spread >= 11 and diff is not None and diff >= 25)
             # A big change is usually a workspace switch, and the frame that shows it is often taken
             # mid-animation with two workspaces blended. That frame is marked a transition and not
             # analyzed; the next stable frame (small diff) is analyzed instead.

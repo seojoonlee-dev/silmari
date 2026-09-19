@@ -164,6 +164,7 @@ async def post_frame(
     height: int | None = Form(default=None),
     diff: float | None = Form(default=None),
     local: float | None = Form(default=None),
+    spread: int | None = Form(default=None),
     image: UploadFile | None = File(default=None),
 ):
     """One captured frame. `ts` is epoch seconds from the client; `unchanged` means the screen
@@ -178,7 +179,7 @@ async def post_frame(
         p = d / f"{int(ts * 1000)}.jpg"
         p.write_bytes(await image.read())
         path = str(p)
-    frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff, local)
+    frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff, local, spread)
     tracker.note_latest(device, frame_id)
     background.add_task(tracker.process, device, frame_id)
     return {"ok": True, "id": frame_id}
