@@ -77,6 +77,9 @@ Rules:
   screen: windows seen inside that picture, and names in its lists, are NOT windows on the screen.
 - "bbox": the window's rectangle as [x1, y1, x2, y2], integers 0-1000 where 1000 is the full image
   width or height (top-left is 0,0). Cover the whole window including its title bar.
+- Notification toasts and banners are NEVER windows: never list one under "windows", even as
+  "other" or "chat"; they go only under "notifications". A window is not "chat" because a Slack
+  or mail banner is showing nearby; judge each window by its own content.
 - "notifications": toasts, banners, badges with text, popups. "app" is the app the banner itself
   names or shows an icon for (Slack, Gmail, Mail, Teams, ...), never a guess from the text.
   Empty list if none.
@@ -296,6 +299,8 @@ class Tracker:
                     "bbox": _norm_bbox(w.get("bbox"), size),
                 }
             )
+        # a real window is never a sliver: anything under 3% of the screen is a banner or a badge
+        wins = [w for w in wins if not w.get("bbox") or (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1]) >= 0.03]
         # The same window reported twice: near-identical boxes, or one box inside another of the
         # same type with the same content. Stacked windows of one type (two browsers) stay separate.
         deduped: list[dict] = []
