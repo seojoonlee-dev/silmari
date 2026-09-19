@@ -8,4 +8,5 @@ dependencies = [
     "openai>=1.50",
     "python-dotenv>=1.0",
     "python-multipart>=0.0.9",
+    "pillow>=12.3.0",
 ]

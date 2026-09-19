@@ -41,6 +41,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[1] /
 CLOSE_AFTER_S = float(os.environ.get("CLOSE_AFTER_S", "600"))
 ANALYZE_EVERY = int(os.environ.get("ANALYZE_EVERY", "5"))  # run the model on every Nth image frame
 BIG_CHANGE = float(os.environ.get("BIG_CHANGE", "20"))  # mean pixel diff (0-255) that forces analysis, e.g. a workspace switch
+LOCAL_CHANGE = float(os.environ.get("LOCAL_CHANGE", "28"))  # strongest 4x4-block diff that forces analysis, e.g. a toast
 STRETCH_REFRESH_S = float(os.environ.get("STRETCH_REFRESH_S", "60"))  # how often the open stretch's narrative is rewritten
 MAX_MODEL_CALLS = int(os.environ.get("MAX_MODEL_CALLS", "6"))  # concurrent vision-model requests across all devices
 RETAIN_H = float(os.environ.get("RETAIN_H", "24"))  # frames older than this are deleted
@@ -51,7 +52,7 @@ bearer = HTTPBearer(auto_error=False)
 store = Store(DATA_DIR / "silmari.db")
 tracker = Tracker(
     store, llm, LLM_MODEL, close_after_s=CLOSE_AFTER_S, analyze_every=ANALYZE_EVERY, big_change=BIG_CHANGE,
-    stretch_refresh_s=STRETCH_REFRESH_S, max_model_calls=MAX_MODEL_CALLS,
+    stretch_refresh_s=STRETCH_REFRESH_S, max_model_calls=MAX_MODEL_CALLS, local_change=LOCAL_CHANGE,
 )
 
 app = FastAPI(title="silmari-backend")
@@ -162,6 +163,7 @@ async def post_frame(
     width: int | None = Form(default=None),
     height: int | None = Form(default=None),
     diff: float | None = Form(default=None),
+    local: float | None = Form(default=None),
     image: UploadFile | None = File(default=None),
 ):
     """One captured frame. `ts` is epoch seconds from the client; `unchanged` means the screen
@@ -176,7 +178,7 @@ async def post_frame(
         p = d / f"{int(ts * 1000)}.jpg"
         p.write_bytes(await image.read())
         path = str(p)
-    frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff)
+    frame_id = store.add_frame(device, ts, path, unchanged, (width, height) if width and height else None, diff, local)
     tracker.note_latest(device, frame_id)
     background.add_task(tracker.process, device, frame_id)
     return {"ok": True, "id": frame_id}

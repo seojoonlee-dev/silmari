@@ -10,8 +10,8 @@ export type CaptureStatus =
   | { state: "recording"; frames: number; skipped: number; lastSentAt: number | null }
   | { state: "error"; message: string };
 
-const MAX_WIDTH = 1280;
-const JPEG_QUALITY = 0.6;
+const MAX_WIDTH = 1600;
+const JPEG_QUALITY = 0.65;
 
 export function deviceId(): string {
   const KEY = "silmari.device";
@@ -117,11 +117,19 @@ export class Recorder {
       const px = tctx.getImageData(0, 0, 16, 16).data;
       const thumb = new Uint8ClampedArray(256);
       for (let i = 0; i < 256; i++) thumb[i] = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3;
-      let diff = 255;
+      // Whole-frame difference, plus the strongest 4x4-block difference: a toast in one corner
+      // barely moves the average but lights up one block, and the server analyzes it right away.
+      let diff = 255, local = 255;
       if (this.lastThumb) {
         let sum = 0;
-        for (let i = 0; i < 256; i++) sum += Math.abs(thumb[i] - this.lastThumb[i]);
+        const blocks = new Array(16).fill(0);
+        for (let i = 0; i < 256; i++) {
+          const d = Math.abs(thumb[i] - this.lastThumb[i]);
+          sum += d;
+          blocks[Math.floor(i / 64) * 4 + Math.floor((i % 16) / 4)] += d;
+        }
         diff = sum / 256;
+        local = Math.max(...blocks) / 16;
       }
       this.lastThumb = thumb;
       const unchanged = false;
@@ -131,6 +139,7 @@ export class Recorder {
       form.set("ts", String(Date.now() / 1000));
       form.set("unchanged", String(unchanged));
       form.set("diff", diff.toFixed(1));
+      form.set("local", local.toFixed(1));
       form.set("width", String(this.canvas.width));
       form.set("height", String(this.canvas.height));
       if (!unchanged) {

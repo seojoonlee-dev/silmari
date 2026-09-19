@@ -53,7 +53,12 @@ Rules:
   document or file path, the web page and site, the note name, the track and artist, the running
   program. Quote what you can read; never invent.
 - A window that is PARTLY hidden behind another window is still visible: list it, and give its
-  full rectangle including the hidden part as best you can. System bars (taskbar, dock, menu bar),
+  full rectangle including the hidden part as best you can.
+- Adjacent windows often share the same very dark background with no visible border between
+  them. Look for a change of CONTENT, not of color: a region with a shell prompt or monospaced
+  command output is a terminal window, and a document, note or page above or beside it is a
+  separate window. On a tiled desktop, if a KNOWN window's rectangle sits entirely inside an area
+  you were about to report as one window, that area holds more than one window: split it. System bars (taskbar, dock, menu bar),
   desktop icons and wallpaper are never windows.
 - One entry per visible TOP-LEVEL application window. Panels, sidebars, split panes, tabs and
   embedded terminals INSIDE an application (an editor's terminal panel, its file tree, a browser's
@@ -126,6 +131,19 @@ STRETCH_SCHEMA = {
 
 def _b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode()
+
+
+CROP_PROMPT = """This is a CROP of part of a computer screen, first read as ONE window. Check whether it actually
+holds two or more SEPARATE top-level application windows tiled next to each other or stacked.
+Adjacent windows can share the same dark background with no visible border; tell them apart by
+CONTENT: a code editor, a terminal with a shell prompt, a notes document, a web page, a music
+player are different applications. PANELS INSIDE ONE APPLICATION ARE NOT WINDOWS: an editor's
+integrated terminal panel, its file tree and its tabs belong to the editor (one window); a
+browser's tabs belong to the browser. A terminal showing code, a chat-like transcript or an AI
+assistant is still one terminal window. If the crop is one window, return just that one.
+Return ONLY JSON: {"windows": [{"type": "terminal|editor|browser|notes|music|video|chat|mail|calendar|files|design|document|other", "title": "window title if visible else empty", "what": "the specific content: file path, page, note name, track, command", "summary": "two specific sentences on what it shows", "bbox": [x1, y1, x2, y2]}]}
+bbox as integers 0-1000 relative to THIS crop. Count carefully and never merge two different apps."""
+LARGE_BOX = 0.3  # fraction of the screen above which a reported window is re-checked for hidden splits
 
 
 def _norm_bbox(raw, size: tuple[int, int] | None) -> list[float] | None:
@@ -205,8 +223,9 @@ def _extract_json(text: str) -> dict:
 class Tracker:
     def __init__(
         self, store: Store, llm: AsyncOpenAI, model: str, close_after_s: float = 600.0, analyze_every: int = 5,
-        big_change: float = 20.0, stretch_refresh_s: float = 60.0, max_model_calls: int = 6,
+        big_change: float = 20.0, stretch_refresh_s: float = 60.0, max_model_calls: int = 6, local_change: float = 28.0,
     ):
+        self.local_change = local_change
         self.store = store
         self.llm = llm
         self.model = model
@@ -317,6 +336,72 @@ class Tracker:
             out["truncated"] = True
         return out
 
+    async def refine_large(self, path: Path, analysis: dict) -> None:
+        """A box covering a large part of the screen is often two tiled windows read as one
+        (same dark theme, no border). Re-read each such box as a crop; if the crop holds two or
+        more windows, replace the box with them. At most two crops per frame."""
+        try:
+            from PIL import Image
+        except ImportError:
+            return
+        big = [w for w in analysis["windows"] if w.get("bbox") and (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1]) >= LARGE_BOX]
+        if not big:
+            return
+        img = Image.open(path).convert("RGB")
+        W, H = img.size
+        out: list[dict] = []
+        checked = 0
+        for w in analysis["windows"]:
+            if w not in big or checked >= 2:
+                out.append(w)
+                continue
+            checked += 1
+            x1, y1, x2, y2 = w["bbox"]
+            crop = img.crop((int(x1 * W), int(y1 * H), int(x2 * W), int(y2 * H)))
+            import io
+            buf = io.BytesIO()
+            crop.save(buf, "JPEG", quality=70)
+            try:
+                async with self._sem:
+                    res = await self._create(
+                        model=self.model, max_tokens=700, temperature=0.1,
+                        messages=[{"role": "user", "content": [
+                            {"type": "text", "text": CROP_PROMPT},
+                            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}},
+                        ]}],
+                        response_format={"type": "json_object"},
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                    )
+                parts = _extract_json(res.choices[0].message.content or "{}").get("windows") or []
+            except Exception as e:  # noqa: BLE001
+                log.warning("crop refine failed: %s", e)
+                out.append(w)
+                continue
+            good = []
+            for p in parts:
+                if not isinstance(p, dict):
+                    continue
+                bb = _norm_bbox(p.get("bbox"), None)
+                if not bb:
+                    continue
+                typ = _norm(p.get("type") or "other")
+                good.append({
+                    "id": "w-" + secrets.token_hex(2),
+                    "type": typ if typ in APP_TYPES else "other",
+                    "app": APP_LABEL.get(typ if typ in APP_TYPES else "other"),
+                    "title": str(p.get("title") or "")[:160],
+                    "what": str(p.get("what") or "")[:160],
+                    "category": w.get("category", "other"),
+                    "summary": (str(p.get("summary") or "")[:900] or None),
+                    # crop coordinates back to the full frame
+                    "bbox": [round(x1 + bb[0] * (x2 - x1), 4), round(y1 + bb[1] * (y2 - y1), 4), round(x1 + bb[2] * (x2 - x1), 4), round(y1 + bb[3] * (y2 - y1), 4)],
+                })
+            if len(good) >= 2:
+                out.extend(good)
+            else:
+                out.append(w)
+        analysis["windows"] = out
+
     async def process(self, device: str, frame_id: int) -> None:
         """Analyze one frame and update the tracker. Serialized per device."""
         async with self.lock(device):
@@ -345,7 +430,11 @@ class Tracker:
             if not big:
                 self._settling[device] = 0
             self._last_stable_ts[device] = ts
-            due = has_image and (self._since.get(device, 0) % self.analyze_every == 0 or stale or waiting or big)
+            # a strong change confined to one part of the screen (a notification toast) is analyzed
+            # at once, as a same-scene frame
+            local = float(frame["local"]) if frame["local"] is not None else 0.0
+            localhit = has_image and not big and local >= self.local_change
+            due = has_image and (self._since.get(device, 0) % self.analyze_every == 0 or stale or waiting or big or localhit)
             # Backlog (several devices busy at once): only the newest queued frame of a device is
             # worth a model call; older ones inherit and the next frame becomes due immediately.
             if due and self._latest_frame.get(device, frame_id) != frame_id:
@@ -368,6 +457,7 @@ class Tracker:
                     known = self._known(device, prev)
                     size = (int(frame["width"]), int(frame["height"])) if frame["width"] and frame["height"] else None
                     analysis = await self.analyze_image(Path(frame["path"]), known, size, self.lang(device))
+                    await self.refine_large(Path(frame["path"]), analysis)
             except Exception as e:  # noqa: BLE001
                 log.warning("frame %s analysis failed: %s", frame_id, e)
                 carried = dict(prev) if prev else {"windows": [], "notifications": [], "activity": ""}
@@ -457,6 +547,29 @@ class Tracker:
         if same_scene and prev_windows:
             # the previous frame IS the layout; other workspaces' windows are not candidates
             layout = {w["id"]: w["bbox"] for w in prev_windows if w.get("bbox") and w["id"] in info}
+            # Merge guard: a reported box that covers two or more previous-frame windows almost
+            # exactly (each at least 85% inside it, together filling it) is those windows read as
+            # one, usually a translucent terminal next to another dark window. Split it back.
+            def inside(a, b):  # fraction of a inside b
+                ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+                aa = (a[2] - a[0]) * (a[3] - a[1])
+                return (ix * iy) / aa if aa > 0 else 0.0
+            expanded: list[dict] = []
+            for w in windows:
+                if not w.get("bbox"):
+                    expanded.append(w); continue
+                parts = [wid for wid, box in layout.items() if inside(box, w["bbox"]) >= 0.85]
+                area = (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1])
+                parts_area = sum((layout[p][2] - layout[p][0]) * (layout[p][3] - layout[p][1]) for p in parts)
+                if len(parts) >= 2 and area > 0 and parts_area / area >= 0.8:
+                    for p in parts:
+                        pw = next((x for x in prev_windows if x["id"] == p), None)
+                        if pw is None:
+                            continue
+                        expanded.append({**pw, "bbox": layout[p]})
+                else:
+                    expanded.append(w)
+            windows[:] = expanded
             _, assign = self._match_layout(windows, layout, types)
             assigned.update(assign)
             members = set(layout)

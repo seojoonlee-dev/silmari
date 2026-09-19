@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS frames (
   analysis TEXT,
   width INTEGER,
   height INTEGER,
-  diff REAL
+  diff REAL,
+  local REAL
 );
 CREATE INDEX IF NOT EXISTS frames_device_ts ON frames(device, ts);
 
@@ -88,7 +89,7 @@ class Store:
         self.lock = threading.Lock()
         # migrations for databases created before these columns existed
         for table, col, typ in (
-            ("frames", "width", "INTEGER"), ("frames", "height", "INTEGER"), ("frames", "diff", "REAL"),
+            ("frames", "width", "INTEGER"), ("frames", "height", "INTEGER"), ("frames", "diff", "REAL"), ("frames", "local", "REAL"),
             ("windows", "bbox", "TEXT"), ("windows", "title", "TEXT"),
             ("stretches", "narrative", "TEXT"), ("stretches", "left_here", "TEXT"),
             ("stretches", "summarized_at", "REAL"), ("stretches", "summarized_n", "INTEGER"),
@@ -118,13 +119,14 @@ class Store:
 
     # -- frames --
     def add_frame(
-        self, device: str, ts: float, path: str | None, unchanged: bool, size: tuple[int, int] | None = None, diff: float | None = None
+        self, device: str, ts: float, path: str | None, unchanged: bool, size: tuple[int, int] | None = None,
+        diff: float | None = None, local: float | None = None,
     ) -> int:
         with self.lock:
             w, h = size if size else (None, None)
             cur = self.db.execute(
-                "INSERT INTO frames(device, ts, path, unchanged, width, height, diff) VALUES (?,?,?,?,?,?,?)",
-                (device, ts, path, int(unchanged), w, h, diff),
+                "INSERT INTO frames(device, ts, path, unchanged, width, height, diff, local) VALUES (?,?,?,?,?,?,?,?)",
+                (device, ts, path, int(unchanged), w, h, diff, local),
             )
             self.db.commit()
             return int(cur.lastrowid)
