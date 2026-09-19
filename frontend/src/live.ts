@@ -33,7 +33,10 @@ export function fromApi(tl: ApiTimeline): Day | null {
   const nowTs = recording || lastTs === 0 ? tl.now : lastTs;
   const now = hhmm(nowTs);
   // The timeline starts when recording started and runs to now, with a little room on the right.
-  const first = Math.min(nowTs, ...tl.windows.map((w) => w.start), ...tl.frames.map((f) => f.ts));
+  // The timeline starts at the first analyzed window, not the first uploaded frame, so the seconds
+  // before the model's first result do not show as an empty strip.
+  const analyzedStarts = [...tl.windows.map((w) => w.start), ...tl.stretches.map((s) => s.start)];
+  const first = analyzedStarts.length ? Math.min(nowTs, ...analyzedStarts) : Math.min(nowTs, ...tl.frames.map((f) => f.ts));
   const dayStart = hhmm(first);
   const span = Math.max(1, toMin(now) - toMin(dayStart));
   const dayEnd = fromMin(Math.min(toMin(now) + Math.max(1, Math.round(span * 0.05)), 24 * 60 - 1));

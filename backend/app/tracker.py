@@ -499,7 +499,8 @@ class Tracker:
             # A big change is usually a workspace switch, and the frame that shows it is often taken
             # mid-animation with two workspaces blended. That frame is marked a transition and not
             # analyzed; the next stable frame (small diff) is analyzed instead.
-            if big and has_image:
+            # the very first frame of a session is "big" by definition; analyze it right away
+            if big and has_image and prev is not None:
                 self._settling[device] = self._settling.get(device, 0) + 1
                 if self._settling[device] <= 3:
                     if self._settling[device] == 1:
