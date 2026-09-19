@@ -38,6 +38,7 @@ const STR = {
   connectedTo: ["Connected to", "연결된 서버:"],
   model: ["Model", "모델"],
   language: ["Language", "언어"],
+  settings: ["Settings", "설정"],
   showTutorial: ["Show tutorial", "사용법 다시 보기"],
   resetData: ["Reset my data", "내 데이터 초기화"],
   signOut: ["Sign out", "로그아웃"],

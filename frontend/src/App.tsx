@@ -8,6 +8,7 @@ import Timeline from "./components/Timeline";
 import Tour from "./components/Tour";
 import { sampleDay } from "./data/sample";
 import Wordmark from "./components/Wordmark";
+import { IconGear } from "./components/icons";
 import { emptyDay } from "./data/empty";
 import { useFrameAnalysis, useRecorder, useTimeline } from "./live";
 import { setLang, useLang, useT } from "./i18n";
@@ -148,7 +149,8 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
             <button className={"seg-btn" + (lang === "ko" ? " on" : "")} onClick={() => setLang("ko")}>한국어</button>
           </div>
           {chip}
-          <button className="mono muted menu-btn" onClick={() => setMenu((v) => !v)} aria-expanded={menu} data-tour="menu">{day.now}</button>
+          <span className="mono muted">{day.now}</span>
+          <button className="menu-btn gear" onClick={() => setMenu((v) => !v)} aria-expanded={menu} aria-label={t("settings")} title={t("settings")} data-tour="menu"><IconGear size={18} /></button>
           {menu && (
             <div className="menu" role="menu">
               <div className="small">{t("connectedTo")} <b className="mono">{me.host}</b></div>
