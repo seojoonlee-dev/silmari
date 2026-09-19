@@ -252,7 +252,11 @@ class Tracker:
 
     @staticmethod
     def _lang_note(lang: str, what: str) -> str:
-        return f"\n\nLANGUAGE: write {what} in Korean, polite style (한국어 존댓말, '~했습니다/~입니다'체). Keep file names, paths, commands, URLs and product names as they appear on screen." if lang == "ko" else ""
+        if lang == "ko":
+            return (f"\n\nLANGUAGE: write {what} entirely in Korean, polite style (한국어 존댓말, '~했습니다/~입니다'체). "
+                    "Only proper nouns stay as they appear on screen: file names and paths, commands, URLs, identifiers, "
+                    "app and product names, and people's names. Everything else, including descriptive words around them, is Korean.")
+        return f"\n\nLANGUAGE: write {what} in English. File names, paths, commands, URLs, identifiers, app and product names and people's names stay exactly as they appear on screen."
 
     def lock(self, device: str) -> asyncio.Lock:
         return self._locks.setdefault(device, asyncio.Lock())
@@ -775,8 +779,80 @@ class Tracker:
                 self.store.set_stretch_summary(int(cur["id"]), activity)
 
     # ---------------- stretch narratives ----------------
+    async def translate_texts(self, texts: list[str], lang: str) -> list[str]:
+        """Translate short UI texts in batches, keeping proper nouns. Returns the same length."""
+        target = "Korean (polite 존댓말)" if lang == "ko" else "English"
+        out: list[str] = []
+        for i in range(0, len(texts), 30):
+            chunk = texts[i:i + 30]
+            prompt = (f"Translate every string in the JSON array into {target}. Keep file names, paths, commands, URLs, "
+                      "identifiers, app and product names and people's names exactly as they are; translate everything "
+                      "else, including the descriptive words around such names. Preserve Markdown. Return ONLY JSON "
+                      '{"t": [...]} with the same number of strings in the same order.\n\n' + json.dumps(chunk, ensure_ascii=False))
+            try:
+                async with self._sem:
+                    res = await self._create(
+                        model=self.model, max_tokens=4000, temperature=0.1,
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"},
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                    )
+                got = _extract_json(res.choices[0].message.content or "{}").get("t") or []
+                if len(got) != len(chunk):
+                    raise ValueError(f"got {len(got)} of {len(chunk)}")
+                out.extend(str(g) for g in got)
+            except Exception as e:  # noqa: BLE001
+                log.warning("translate chunk failed: %s", e)
+                out.extend(chunk)
+        return out
+
+    async def translate_all(self, device: str, lang: str) -> None:
+        """Rewrite every stored description (window content and summaries, activity lines, frame
+        analyses) in the new language, so the whole screen switches, not just new results."""
+        keys: dict[str, None] = {}
+        def add(s):
+            if isinstance(s, str) and s.strip():
+                keys.setdefault(s, None)
+        wins = self.store.all_windows(device)
+        for r in wins:
+            add(r["what"]); add(r["summary"])
+        sts = self.store.all_stretches(device)
+        for r in sts:
+            add(r["summary"])
+        frames = self.store.db.execute("SELECT id, analysis FROM frames WHERE device=? AND analysis IS NOT NULL", (device,)).fetchall()
+        distinct: dict[str, list[int]] = {}
+        for fr in frames:
+            distinct.setdefault(fr["analysis"], []).append(fr["id"])
+        for a_txt in distinct:
+            a = json.loads(a_txt)
+            add(a.get("activity"))
+            for w in a.get("windows", []):
+                add(w.get("what")); add(w.get("summary"))
+        texts = list(keys)
+        if not texts:
+            return
+        tr = dict(zip(texts, await self.translate_texts(texts, lang)))
+        t = lambda s: tr.get(s, s) if isinstance(s, str) else s  # noqa: E731
+        with self.store.lock:
+            for r in wins:
+                self.store.db.execute("UPDATE windows SET what=?, summary=? WHERE id=?", (t(r["what"]), t(r["summary"]), r["id"]))
+            for r in sts:
+                self.store.db.execute("UPDATE stretches SET summary=? WHERE id=?", (t(r["summary"]), r["id"]))
+            for a_txt, ids in distinct.items():
+                a = json.loads(a_txt)
+                a["activity"] = t(a.get("activity"))
+                for w in a.get("windows", []):
+                    w["what"] = t(w.get("what")); w["summary"] = t(w.get("summary"))
+                new = json.dumps(a)
+                self.store.db.executemany("UPDATE frames SET analysis=? WHERE id=?", [(new, i) for i in ids])
+            self.store.db.commit()
+
     async def regenerate_all(self, device: str) -> None:
-        """After a language change: rewrite every stretch narrative, a few at a time."""
+        """After a language change: translate what is stored, then rewrite every stretch narrative."""
+        try:
+            await self.translate_all(device, self.lang(device))
+        except Exception as e:  # noqa: BLE001
+            log.warning("translate_all failed: %s", e)
         self.store.clear_narratives(device)
         for _ in range(20):
             before = sum(1 for r in self.store.all_stretches(device) if r["narrative"] is None)
