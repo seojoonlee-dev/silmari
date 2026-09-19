@@ -393,6 +393,25 @@ class Tracker:
             self._apply(device, ts, analysis, real=due)
         # Stretch narratives run outside the per-device lock (they are slow and read-only).
         asyncio.create_task(self._refresh_narratives(device))
+        # When frames stop (recording ended), finish what is pending instead of waiting for a
+        # next frame that never comes: commit the pending window set as a stretch and write the
+        # narratives of everything that has none yet.
+        asyncio.create_task(self._finalize_later(device, frame_id))
+
+    async def _finalize_later(self, device: str, frame_id: int, delay: float = 12.0) -> None:
+        await asyncio.sleep(delay)
+        if self._latest_frame.get(device) != frame_id:
+            return  # a newer frame arrived; it will schedule its own finalize
+        async with self.lock(device):
+            pending = self._pending_set.pop(device, None)
+            if pending is not None:
+                cur = self.store.current_stretch(device)
+                if cur is None or json.loads(cur["window_ids"]) != pending[0]:
+                    if cur is not None:
+                        self.store.end_stretch(int(cur["id"]), pending[1])
+                    prev = self.store.latest_real_analysis(device)
+                    self.store.start_stretch(device, pending[1], pending[0], (prev or {}).get("activity") or "")
+        await self._refresh_narratives(device, force=True)
 
     def _known(self, device: str, prev: dict | None) -> list[dict]:
         """Open windows as the model gets them: id, type and last box only. No content, so there
@@ -672,13 +691,13 @@ class Tracker:
             if sum(1 for r in self.store.all_stretches(device) if r["narrative"] is None) >= before:
                 return
 
-    async def _refresh_narratives(self, device: str) -> None:
+    async def _refresh_narratives(self, device: str, force: bool = False) -> None:
         """Write or refresh the narrative of the current stretch (every stretch_refresh_s while it
         has new analyses) and of the last ended stretch that has none yet."""
         now = time.time()
         todo = []
         cur = self.store.current_stretch(device)
-        if cur is not None and (cur["summarized_at"] is None or cur["narrative"] is None or now - float(cur["summarized_at"]) >= self.stretch_refresh_s):
+        if cur is not None and (force or cur["summarized_at"] is None or cur["narrative"] is None or now - float(cur["summarized_at"]) >= self.stretch_refresh_s):
             todo.append(cur)
         for r in self.store.all_stretches(device):
             if r["end"] is not None and r["narrative"] is None and (cur is None or r["id"] != cur["id"]):
