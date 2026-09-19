@@ -63,15 +63,12 @@ Rules:
   different ids.
 - A window is type "browser" ONLY if browser chrome is visible (tab strip, address bar). Text that
   talks about web pages, dashboards or apps inside a terminal or editor does not make it a browser.
-- KNOWN windows are listed in the user message as ids with a type and a last position only. If a
-  visible window is clearly the same window as a known one of the same type at the same position,
-  reuse that id; otherwise give a new id "w-" plus four RANDOM letters or digits (like w-q7k2 or
-  w-8ma3). Identity is checked separately, so when unsure prefer a new id.
+- "id": four RANDOM letters or digits after "w-" (like w-q7k2 or w-8ma3), different for every
+  window in this reply. Identity across frames is handled elsewhere; never try to remember ids.
 - Describe every window from THIS screenshot's pixels only. A nearly empty window is described as
   what it is (for example a terminal showing only a shell prompt in ~).
-- List ONLY windows actually visible in this screenshot. Omit known windows that are off screen.
-  Text that merely mentions an app or a window (a dashboard, a list, a chat message) is not that
-  window.
+- List ONLY windows actually visible in this screenshot. Text that merely mentions an app or a
+  window (a dashboard, a list, a chat message, a transcript) is not that window.
 - If a browser shows the Silmari dashboard (this memory aid: a screen preview, a timeline with
   colored lanes and cards), it is ONE browser window. The dashboard contains a PICTURE of the
   screen: windows seen inside that picture, and names in its lists, are NOT windows on the screen.
@@ -254,7 +251,6 @@ class Tracker:
 
     # ---------------- per-frame analysis ----------------
     async def analyze_image(self, path: Path, known: list[dict], size: tuple[int, int] | None = None, lang: str = "en") -> dict:
-        known_txt = json.dumps(known, ensure_ascii=False) if known else "[]"
         system = SYSTEM + self._lang_note(lang, 'the "what", "summary" and "activity" fields')
         async with self._sem:
             res = await self._create(
@@ -266,7 +262,7 @@ class Tracker:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"KNOWN windows currently open (reuse ids when matching): {known_txt}"},
+                        {"type": "text", "text": "Describe this screenshot."},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_b64(path)}"}},
                     ],
                 },
@@ -299,6 +295,16 @@ class Tracker:
                     "bbox": _norm_bbox(w.get("bbox"), size),
                 }
             )
+        # the dashboard's preview thumbnail: anything nested inside a large window that is the
+        # Silmari dashboard is a picture of a window, not a window
+        dash = [w for w in wins if w.get("bbox") and re.search(r"silmari", (w.get("what") or "") + " " + (w.get("title") or ""), re.I)
+                and (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1]) >= 0.6]
+        if dash:
+            D = dash[0]["bbox"]
+            def inside(b):
+                ix = max(0.0, min(b[2], D[2]) - max(b[0], D[0])); iy = max(0.0, min(b[3], D[3]) - max(b[1], D[1]))
+                a = (b[2] - b[0]) * (b[3] - b[1]); return a > 0 and (ix * iy) / a >= 0.9 and a < 0.9 * (D[2] - D[0]) * (D[3] - D[1])
+            wins = [w for w in wins if w is dash[0] or not (w.get("bbox") and inside(w["bbox"]))]
         # a real window is never a sliver: anything under 3% of the screen is a banner or a badge
         wins = [w for w in wins if not w.get("bbox") or (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1]) >= 0.03]
         # The same window reported twice: near-identical boxes, or one box inside another of the
