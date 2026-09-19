@@ -787,7 +787,10 @@ class Tracker:
             chunk = texts[i:i + 30]
             prompt = (f"Translate every string in the JSON array into {target}. Keep file names, paths, commands, URLs, "
                       "identifiers, app and product names and people's names exactly as they are; translate everything "
-                      "else, including the descriptive words around such names. Preserve Markdown. Return ONLY JSON "
+                      "else, including the descriptive words around such names, so that no string comes back unchanged "
+                      "unless it is nothing but a name or path (for example 'Terminal window with shell prompt' becomes "
+                      "'셸 프롬프트가 표시된 터미널 창'; 'frontend/src/App.tsx, useRecorder call around line 30' becomes "
+                      "'frontend/src/App.tsx, 30행 부근의 useRecorder 호출'). Preserve Markdown. Return ONLY JSON "
                       '{"t": [...]} with the same number of strings in the same order.\n\n' + json.dumps(chunk, ensure_ascii=False))
             try:
                 async with self._sem:
