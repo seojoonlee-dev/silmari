@@ -478,6 +478,9 @@ class Tracker:
                     # crop coordinates back to the full frame
                     "bbox": [round(x1 + bb[0] * (x2 - x1), 4), round(y1 + bb[1] * (y2 - y1), 4), round(x1 + bb[2] * (x2 - x1), 4), round(y1 + bb[3] * (y2 - y1), 4)],
                 })
+            # parts must be new: a part that mostly overlaps another reported window is that window
+            others = [o for o in analysis["windows"] if o is not w and o.get("bbox")]
+            good = [g for g in good if not any(_iou(g["bbox"], o["bbox"]) >= 0.5 for o in others)]
             # accept a split only between DIFFERENT applications; two parts of one type are one app
             if len(good) >= 2 and len({g["type"] for g in good}) >= 2 and not (
                 {g["type"] for g in good} == {"editor", "terminal"} and w["type"] == "editor"
@@ -485,7 +488,13 @@ class Tracker:
                 out.extend(good)
             else:
                 out.append(w)
-        analysis["windows"] = out
+        # final pass: the same rectangle reported twice is one window
+        final: list[dict] = []
+        for w in out:
+            if w.get("bbox") and any(d.get("bbox") and _iou(d["bbox"], w["bbox"]) >= 0.8 for d in final):
+                continue
+            final.append(w)
+        analysis["windows"] = final
 
     async def process(self, device: str, frame_id: int) -> None:
         """Analyze one frame and update the tracker. Serialized per device."""

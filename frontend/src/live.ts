@@ -51,8 +51,10 @@ export function fromApi(tl: ApiTimeline): Day | null {
   const stretches: Stretch[] = tl.stretches.map((s, i) => {
     const next = tl.stretches[i + 1];
     const leftHere: OpenLoop[] = (s.leftHere ?? []).map((l) => ({ text: l.text, meta: l.where, kind: "document" }));
-    if (!s.end) {
-      for (const n of tl.notifications) {
+    // notifications belong to the stretch they appeared in, so they stay visible when scrubbing back
+    const endTs = s.end ?? Number.POSITIVE_INFINITY;
+    for (const n of tl.notifications) {
+      if (n.time >= s.start && n.time < endTs) {
         leftHere.push({
           text: n.dismissed ? `${n.text} (${t("dismissed")})` : n.text,
           meta: `${n.app} · ${hhmm(n.time)}`,
