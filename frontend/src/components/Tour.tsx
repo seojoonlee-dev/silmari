@@ -39,8 +39,8 @@ const STEPS: Step[] = [
     title: ["Ask your day", "하루에 물어보기"],
     body: ["Ask anything: \"what did the terminal say?\", \"which track was playing?\". The answer reads the actual screenshots and links the moments it mentions. The chips are questions suggested from what you did.", "무엇이든 물어보세요. \"터미널에 뭐라고 나왔지?\", \"무슨 노래가 나오고 있었지?\" 답변은 실제 스크린샷을 읽고, 언급한 순간으로 이동할 수 있는 링크를 답니다. 칩은 여러분의 활동에서 제안된 질문입니다."] },
   { target: "menu", place: "below",
-    title: ["Language, reset, this tour", "언어, 초기화, 이 안내"],
-    body: ["The time opens a menu: switch between English and Korean (the model follows), delete everything recorded from this browser, or replay this tour. You are ready.", "시간을 누르면 메뉴가 열립니다. 영어와 한국어 전환(모델도 따라갑니다), 이 브라우저의 기록 전체 삭제, 이 안내 다시 보기. 이제 준비되었습니다."] },
+    title: ["Reset and this tour", "초기화와 이 안내"],
+    body: ["The time opens a menu: delete everything recorded from this browser, or replay this tour. The EN / 한국어 switch next to the record button changes the language, and the model follows. You are ready.", "시간을 누르면 메뉴가 열립니다. 이 브라우저의 기록 전체 삭제, 이 안내 다시 보기. 녹화 버튼 옆의 EN / 한국어 스위치로 언어를 바꾸면 모델도 따라갑니다. 이제 준비되었습니다."] },
 ];
 
 type Rect = { left: number; top: number; width: number; height: number };

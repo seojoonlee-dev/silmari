@@ -197,8 +197,8 @@ b { font-weight: 700; }
 .modal .narrative { font-size: 15px; }
 .modal-title { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 22px; line-height: 1.2; }
 .modal p { margin: 0; line-height: 1.45; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.seg-btn { border: 0; background: var(--surface); padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg-btn { border: 0; background: var(--surface); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted); }
 .seg-btn.on { background: var(--accent); color: #fff; }
 /* guided tour */
 .tour { position: fixed; inset: 0; z-index: 10000; }

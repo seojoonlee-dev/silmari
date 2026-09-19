@@ -143,18 +143,16 @@ function Screen({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         <div className="row-gap" style={{ gap: 16, position: "relative" }}>
           {st.state === "error" && <span className="small" style={{ color: "#9a2e24" }}>{st.message}</span>}
           {error && <span className="small muted">timeline: {error}</span>}
+          <div className="seg" role="group" aria-label={t("language")}>
+            <button className={"seg-btn" + (lang === "en" ? " on" : "")} onClick={() => setLang("en")}>EN</button>
+            <button className={"seg-btn" + (lang === "ko" ? " on" : "")} onClick={() => setLang("ko")}>한국어</button>
+          </div>
           {chip}
           <button className="mono muted menu-btn" onClick={() => setMenu((v) => !v)} aria-expanded={menu} data-tour="menu">{day.now}</button>
           {menu && (
             <div className="menu" role="menu">
               <div className="small">{t("connectedTo")} <b className="mono">{me.host}</b></div>
               <div className="small muted">{t("model")} {me.model}</div>
-              <div className="row-between"><span className="small">{t("language")}</span>
-                <div className="seg" role="group" aria-label={t("language")}>
-                  <button className={"seg-btn" + (lang === "en" ? " on" : "")} onClick={() => setLang("en")}>EN</button>
-                  <button className={"seg-btn" + (lang === "ko" ? " on" : "")} onClick={() => setLang("ko")}>한국어</button>
-                </div>
-              </div>
               <button className="btn btn-secondary" onClick={() => { setMenu(false); onTutorial(); }}>{t("showTutorial")}</button>
               <button className="btn btn-secondary btn-danger" onClick={() => { setMenu(false); setConfirmReset(true); }}>{t("resetData")}</button>
               <button className="btn btn-secondary" onClick={onSignOut}>{t("signOut")}</button>
