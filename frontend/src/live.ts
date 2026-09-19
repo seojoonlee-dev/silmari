@@ -51,10 +51,16 @@ export function fromApi(tl: ApiTimeline): Day | null {
   const stretches: Stretch[] = tl.stretches.map((s, i) => {
     const next = tl.stretches[i + 1];
     const leftHere: OpenLoop[] = (s.leftHere ?? []).map((l) => ({ text: l.text, meta: l.where, kind: "document" }));
-    // notifications belong to the stretch they appeared in, so they stay visible when scrubbing back
+    // notifications belong to the stretch they appeared in; one that fell between stretches (a
+    // workspace switch, or before the first stretch) goes to the next stretch, else the last
     const endTs = s.end ?? Number.POSITIVE_INFINITY;
+    const prevEnd = i > 0 ? (tl.stretches[i - 1].end ?? tl.stretches[i - 1].start) : Number.NEGATIVE_INFINITY;
+    const isLast = i === tl.stretches.length - 1;
     for (const n of tl.notifications) {
-      if (n.time >= s.start && n.time < endTs) {
+      const inside = n.time >= s.start && n.time < endTs;
+      const gapBefore = n.time < s.start && n.time >= prevEnd;
+      const afterAll = isLast && n.time >= endTs;
+      if (inside || gapBefore || afterAll) {
         leftHere.push({
           text: n.dismissed ? `${n.text} (${t("dismissed")})` : n.text,
           meta: `${n.app} · ${hhmm(n.time)}`,

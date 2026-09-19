@@ -345,6 +345,17 @@ class Tracker:
                     if self._settling[device] == 1:
                         # the old scene ends at this frame, which is also where its lanes end
                         self._transition_at[device] = ts
+                        # a set seen only once before the switch was still a real visit: commit it
+                        pending = self._pending_set.pop(device, None)
+                        if pending is not None:
+                            cur = self.store.current_stretch(device)
+                            if cur is None or json.loads(cur["window_ids"]) != pending[0]:
+                                if cur is not None:
+                                    self.store.end_stretch(int(cur["id"]), pending[1])
+                                self.store.start_stretch(device, pending[1], pending[0], (prev or {}).get("activity") or "")
+                                cur = self.store.current_stretch(device)
+                            if cur is not None and cur["end"] is None:
+                                self.store.end_stretch(int(cur["id"]), ts)
                     self.store.set_analysis(frame_id, {"windows": [], "notifications": [], "activity": "", "transition": True})
                     return
             waiting = self._settling.get(device, 0) > 0
