@@ -372,7 +372,8 @@ class Tracker:
                         response_format={"type": "json_object"},
                         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                     )
-                parts = _extract_json(res.choices[0].message.content or "{}").get("windows") or []
+                data = _extract_json(res.choices[0].message.content or "{}")
+                parts = data.get("windows") or []
             except Exception as e:  # noqa: BLE001
                 log.warning("crop refine failed: %s", e)
                 out.append(w)
@@ -396,7 +397,10 @@ class Tracker:
                     # crop coordinates back to the full frame
                     "bbox": [round(x1 + bb[0] * (x2 - x1), 4), round(y1 + bb[1] * (y2 - y1), 4), round(x1 + bb[2] * (x2 - x1), 4), round(y1 + bb[3] * (y2 - y1), 4)],
                 })
-            if len(good) >= 2:
+            # accept a split only between DIFFERENT applications; two parts of one type are one app
+            if len(good) >= 2 and len({g["type"] for g in good}) >= 2 and not (
+                {g["type"] for g in good} == {"editor", "terminal"} and w["type"] == "editor"
+            ):
                 out.extend(good)
             else:
                 out.append(w)
