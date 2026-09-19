@@ -108,6 +108,11 @@ class SettingsBody(BaseModel):
     lang: str
 
 
+class HintBody(BaseModel):
+    device: str
+    windows: list[dict]
+
+
 class AskBody(BaseModel):
     device: str
     question: str
@@ -214,6 +219,16 @@ async def set_settings(body: SettingsBody):
     if changed:
         asyncio.create_task(tracker.regenerate_all(body.device))
     return {"ok": True, "lang": body.lang, "regenerating": changed}
+
+
+@app.post("/api/hint", dependencies=[Depends(require_auth)])
+async def layout_hint(body: HintBody):
+    """Real window rectangles from a native helper (Hyprland), fractions of the shared screen.
+    When fresh, they decide how the frame is split into windows."""
+    if not re.fullmatch(DEVICE_RE, body.device):
+        raise HTTPException(status_code=400, detail="bad request")
+    tracker.set_hint(body.device, body.windows)
+    return {"ok": True, "windows": len(body.windows)}
 
 
 @app.post("/api/ask", dependencies=[Depends(require_auth)])
